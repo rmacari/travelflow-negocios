@@ -1,0 +1,255 @@
+/**
+ * =============================================================================
+ * Travel Flow Negocios — options.css
+ * =============================================================================
+ * Estilos da página de configuração da extensão Chrome (options.html).
+ *
+ * Design limpo e consistente com a identidade visual do painel lateral,
+ * usando as mesmas variáveis de cor e tipografia do content.css.
+ *
+ * Autor:   Ricardo Macari
+ * Contato: macari@gmail.com
+ * Projeto: Travel Flow Negocios
+ * =============================================================================
+ */
+
+/* ---------------------------------------------------------------------------
+   RESET E BASE
+   --------------------------------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font: 400 14px/1.5 Arial, sans-serif;
+  background: #f0f4f8;
+  color: #1f2937;
+  min-height: 100vh;
+  padding: 32px 16px;
+}
+
+/* ---------------------------------------------------------------------------
+   CONTAINER PRINCIPAL
+   Largura máxima centralizada para boa leitura em qualquer tamanho de janela.
+   --------------------------------------------------------------------------- */
+.opt-container {
+  max-width: 640px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+}
+
+/* ---------------------------------------------------------------------------
+   CABEÇALHO
+   --------------------------------------------------------------------------- */
+.opt-header {
+  text-align: center;
+  padding: 8px 0 4px;
+}
+
+.opt-title {
+  font: 700 22px/1.2 Arial, sans-serif;
+  color: #0a6c74;
+  margin-bottom: 6px;
+}
+
+.opt-subtitle {
+  font: 400 14px/1.4 Arial, sans-serif;
+  color: #667085;
+}
+
+/* ---------------------------------------------------------------------------
+   CARDS DE SEÇÃO
+   --------------------------------------------------------------------------- */
+.opt-card {
+  background: #ffffff;
+  border: 1px solid #d8deea;
+  border-radius: 16px;
+  padding: 24px;
+  display: grid;
+  gap: 18px;
+}
+
+/* Card informativo com fundo levemente azulado */
+.opt-card-info {
+  background: #f0f8f8;
+  border-color: #b8dde0;
+}
+
+.opt-section-title {
+  font: 700 16px/1.3 Arial, sans-serif;
+  color: #1f2937;
+  padding-bottom: 4px;
+  border-bottom: 2px solid #eef3f8;
+}
+
+/* ---------------------------------------------------------------------------
+   CAMPOS DO FORMULÁRIO
+   --------------------------------------------------------------------------- */
+.opt-row {
+  display: grid;
+  gap: 6px;
+}
+
+.opt-label {
+  font: 600 12px/1.2 Arial, sans-serif;
+  color: #667085;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.opt-input {
+  width: 100%;
+  border: 1px solid #d8deea;
+  border-radius: 10px;
+  background: #fff;
+  color: #1f2937;
+  padding: 10px 12px;
+  font: 400 14px/1.4 Arial, sans-serif;
+  outline: none;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+
+.opt-input:focus {
+  border-color: #0a6c74;
+  box-shadow: 0 0 0 3px rgba(10, 108, 116, 0.12);
+}
+
+/* Grupo de input com botão de visibilidade embutido */
+.opt-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.opt-input-group .opt-input {
+  flex: 1;
+}
+
+.opt-toggle-visibility {
+  border: 1px solid #d8deea;
+  border-radius: 10px;
+  background: #f7f8fb;
+  color: #667085;
+  padding: 10px 12px;
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+  transition: background 150ms;
+}
+
+.opt-toggle-visibility:hover {
+  background: #eef3f8;
+}
+
+/* Texto de ajuda abaixo do campo */
+.opt-hint {
+  font: 400 12px/1.4 Arial, sans-serif;
+  color: #667085;
+}
+
+.opt-hint code {
+  font-family: monospace;
+  background: #eef3f8;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------------------
+   INSTRUÇÕES DE INSTALAÇÃO
+   --------------------------------------------------------------------------- */
+.opt-steps {
+  padding-left: 20px;
+  display: grid;
+  gap: 10px;
+}
+
+.opt-steps li {
+  font: 400 13px/1.5 Arial, sans-serif;
+  color: #374151;
+}
+
+.opt-steps code {
+  font-family: monospace;
+  background: #dff0f1;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #0a6c74;
+}
+
+.opt-steps a {
+  color: #0a6c74;
+  text-decoration: underline;
+}
+
+/* Bloco de código para o db.conf de exemplo */
+.opt-pre {
+  font-family: monospace;
+  font-size: 12px;
+  background: #1f2937;
+  color: #e5e7eb;
+  padding: 12px 14px;
+  border-radius: 8px;
+  margin-top: 8px;
+  white-space: pre;
+  overflow-x: auto;
+  line-height: 1.6;
+}
+
+/* ---------------------------------------------------------------------------
+   BOTÕES DE AÇÃO
+   --------------------------------------------------------------------------- */
+.opt-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.opt-btn {
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 20px;
+  font: 600 14px/1.2 Arial, sans-serif;
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.opt-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.opt-btn-primary {
+  background: #0a6c74;
+  color: #fff;
+}
+
+.opt-btn-primary:hover:not(:disabled) {
+  background: #08545a;
+}
+
+.opt-btn-secondary {
+  background: #e9eef5;
+  color: #1f2937;
+}
+
+.opt-btn-secondary:hover:not(:disabled) {
+  background: #dfe7f1;
+}
+
+/* ---------------------------------------------------------------------------
+   MENSAGEM DE STATUS
+   --------------------------------------------------------------------------- */
+.opt-status {
+  font: 600 13px/1.4 Arial, sans-serif;
+  min-height: 20px;
+}
+
+.opt-status-success { color: #1e7a34; }
+.opt-status-error   { color: #b42318; }
+.opt-status-info    { color: #667085; }
