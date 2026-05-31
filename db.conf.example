@@ -1,0 +1,28 @@
+# =============================================================================
+# Travel Flow Negocios — db.conf.example
+# =============================================================================
+# Arquivo de configuração do backend PHP.
+#
+# INSTRUÇÕES:
+#   1. Copie este arquivo para db.conf (mesmo diretório)
+#   2. Preencha os valores reais abaixo
+#   3. NUNCA envie db.conf para repositórios públicos (git, etc.)
+#
+# Autor:   Ricardo Macari
+# Contato: macari@gmail.com
+# Projeto: Travel Flow Negocios
+# =============================================================================
+
+# Credenciais do banco de dados MySQL
+DB_HOST=localhost
+DB_NAME=seu_banco
+DB_USER=seu_usuario
+DB_PASS=sua_senha
+
+# Origem permitida para requisições CORS (domínio do Travel Flow CRM)
+ALLOWED_ORIGIN=https://travelflow.tur.br
+
+# Chave secreta para os endpoints de gerenciamento de campos (add_field,
+# remove_field, get_fields). Use uma string longa e aleatória.
+# Exemplo de como gerar uma: openssl rand -hex 32
+API_KEY=substitua_por_uma_chave_secreta_longa_e_aleatoria
