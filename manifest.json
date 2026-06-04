@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Travel Flow Negocios",
-  "version": "0.4.0",
+  "version": "0.4.5",
   "description": "Painel lateral para salvar e gerenciar negócios do lead no Travel Flow CRM, usando banco de dados próprio via conversationId.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": [

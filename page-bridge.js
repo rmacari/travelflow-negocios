@@ -10,6 +10,10 @@
  * o evento customizado 'tfq:conversation-change' para que o content.js possa
  * recarregar os negócios do novo atendimento sem intervenção manual.
  *
+ * O evento inclui o nome do lead capturado do DOM no momento da troca
+ * (detail.leadName), permitindo que o content.js atualize o título do painel
+ * imediatamente, antes mesmo de aguardar o loadNegocios terminar.
+ *
  * Estratégia multi-camada para garantir detecção confiável:
  *   1. Interceptação de history.pushState e history.replaceState
  *   2. Evento popstate (navegação com botões voltar/avançar)
@@ -35,7 +39,14 @@
   let lastId = null;
 
   // ---------------------------------------------------------------------------
-  // LEITURA DO conversationId
+  // SELETOR DO NOME DO LEAD
+  // Mesmo seletor usado pelo content.js — deve ser mantido em sincronia.
+  // Identificado na interface do Travel Flow como h3.font-semibold.
+  // ---------------------------------------------------------------------------
+  const LEAD_NAME_SELECTOR = 'h3.font-semibold';
+
+  // ---------------------------------------------------------------------------
+  // LEITURA DO conversationId E NOME DO LEAD
   // ---------------------------------------------------------------------------
 
   /**
@@ -47,13 +58,48 @@
     return new URL(window.location.href).searchParams.get('conversationId') || '';
   }
 
+  /**
+   * Tenta ler o nome do lead do DOM da página de atendimento.
+   * Como o Travel Flow é um SPA, o elemento pode não estar atualizado
+   * imediatamente após a troca de URL. Tenta até 6 vezes com delays
+   * crescentes (0, 80, 200, 400, 700, 1200ms) antes de desistir.
+   *
+   * Chama o callback com o nome encontrado ou string vazia se não encontrar.
+   *
+   * @param {Function} callback - Função chamada com o nome do lead (string).
+   */
+  function getLeadNameAsync(callback) {
+    const delays  = [0, 80, 200, 400, 700, 1200];
+    let attempt   = 0;
+
+    function tryRead() {
+      const el   = document.querySelector(LEAD_NAME_SELECTOR);
+      const name = el ? el.textContent.trim() : '';
+
+      if (name) {
+        callback(name);
+        return;
+      }
+
+      attempt++;
+      if (attempt < delays.length) {
+        setTimeout(tryRead, delays[attempt]);
+      } else {
+        callback('');
+      }
+    }
+
+    tryRead();
+  }
+
   // ---------------------------------------------------------------------------
   // EMISSÃO DO EVENTO DE MUDANÇA
   // ---------------------------------------------------------------------------
 
   /**
    * Verifica se o conversationId mudou desde a última emissão e, se sim,
-   * dispara o evento customizado 'tfq:conversation-change' na window.
+   * dispara o evento customizado 'tfq:conversation-change' na window,
+   * incluindo o nome do lead capturado do DOM.
    *
    * A verificação de rota (/atendimento-web) garante que o evento só seja
    * emitido na página de atendimento, evitando disparos desnecessários em
@@ -72,13 +118,18 @@
 
     lastId = conversationId;
 
-    window.dispatchEvent(new CustomEvent('tfq:conversation-change', {
-      detail: {
-        conversationId,
-        href: window.location.href,
-        source
-      }
-    }));
+    // Captura o nome do lead de forma assíncrona com retentativas,
+    // pois o SPA pode ainda não ter atualizado o DOM no momento do disparo
+    getLeadNameAsync(leadName => {
+      window.dispatchEvent(new CustomEvent('tfq:conversation-change', {
+        detail: {
+          conversationId,
+          leadName,
+          href:   window.location.href,
+          source
+        }
+      }));
+    });
   }
 
   // ---------------------------------------------------------------------------

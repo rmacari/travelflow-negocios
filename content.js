@@ -2,6 +2,42 @@
  * =============================================================================
  * Travel Flow Negocios — content.js
  * =============================================================================
+ * Extensão Chrome para o Travel Flow CRM (travelflow.tur.br)
+ *
+ * Injeta um painel lateral na página de atendimento que permite ao operador
+ * criar, visualizar, editar e excluir múltiplos negócios vinculados a um lead,
+ * usando o conversationId presente na URL como chave de vínculo.
+ *
+ * O campo Nome do Lead é preenchido automaticamente a partir do elemento
+ * h3.font-semibold presente no DOM da página de atendimento.
+ *
+ * API_BASE e API_KEY são carregados do chrome.storage.sync, configurados
+ * pelo usuário na página de Opções da extensão. Se não configurados,
+ * o painel exibe um aviso orientando o usuário.
+ *
+ * ADMIN_KEY é uma chave opcional também carregada do storage. Quando presente,
+ * habilita a aba ⚙️ Campos no painel, permitindo gerenciar a estrutura do banco.
+ * Usuários sem ADMIN_KEY veem apenas a aba 📋 Negócios.
+ *
+ * Os dados são persistidos em banco MySQL via API PHP hospedada no servidor
+ * do operador. A extensão detecta automaticamente trocas de atendimento e
+ * recarrega os negócios correspondentes sem recarregar a página.
+ *
+ * Correções aplicadas (v0.4.1):
+ *   - getElementById com template literals corrigidas em clearForm, fillForm e getFormData
+ *   - querySelector com template literals corrigidas no sistema de abas
+ *
+ * Novidades (v0.4.5):
+ *   - updatePanelTitle(): título h2 do painel atualiza com o nome do lead
+ *     ao trocar de conversa, com retentativas para aguardar o DOM do SPA
+ *   - page-bridge.js captura o nome do lead assincronamente e inclui
+ *     no evento tfq:conversation-change (detail.leadName), permitindo
+ *     atualização imediata do título antes do loadNegocios terminar
+ *
+ * Autor:   Ricardo Macari
+ * Contato: macari@gmail.com
+ * Projeto: Travel Flow Negocios
+ * =============================================================================
  */
 (function () {
 
@@ -9,15 +45,17 @@
   const TOGGLE_ID          = 'tfq-toggle';
   const LEAD_NAME_SELECTOR = 'h3.font-semibold';
 
-  let API_BASE = '';
-  let API_KEY  = '';
+  let API_BASE  = '';
+  let API_KEY   = '';
+  let ADMIN_KEY = '';
 
   function loadUserConfig() {
     return new Promise(resolve => {
       try {
-        chrome.storage.sync.get(['tfq_api_base', 'tfq_api_key'], result => {
-          API_BASE = (result.tfq_api_base || '').trim().replace(/\/$/, '');
-          API_KEY  = (result.tfq_api_key  || '').trim();
+        chrome.storage.sync.get(['tfq_api_base', 'tfq_api_key', 'tfq_admin_key'], result => {
+          API_BASE  = (result.tfq_api_base  || '').trim().replace(/\/$/, '');
+          API_KEY   = (result.tfq_api_key   || '').trim();
+          ADMIN_KEY = (result.tfq_admin_key || '').trim();
           resolve();
         });
       } catch (e) {
@@ -28,6 +66,15 @@
 
   function isConfigured() {
     return API_BASE !== '' && API_KEY !== '';
+  }
+
+  /**
+   * Verifica se o usuário tem acesso de administrador (ADMIN_KEY preenchida).
+   * Controla a visibilidade da aba ⚙️ Campos no painel lateral.
+   * @returns {boolean}
+   */
+  function isAdmin() {
+    return ADMIN_KEY !== '';
   }
 
   const fields = [
@@ -211,13 +258,58 @@
     if (el) el.textContent = getConversationId() || 'Não encontrado';
   }
 
+  /**
+   * Atualiza o título h2 do painel com o nome do lead lido do DOM.
+   *
+   * O Travel Flow é um SPA e pode demorar alguns ms para atualizar o elemento
+   * h3.font-semibold após a troca de conversa. Por isso, tenta ler o nome
+   * em até 5 tentativas com intervalos crescentes (100ms, 300ms, 600ms, 1000ms, 1500ms)
+   * antes de desistir e exibir o texto genérico.
+   *
+   * @param {string} [knownName] - Nome já conhecido (vindo do page-bridge.js).
+   *                               Se fornecido, atualiza imediatamente sem retentativas.
+   */
+  function updatePanelTitle(knownName) {
+    const titleEl = document.getElementById('tfq-title');
+    if (!titleEl) return;
+
+    // Se o nome já foi capturado pelo page-bridge, usa diretamente
+    if (knownName) {
+      titleEl.textContent = knownName;
+      return;
+    }
+
+    // Tenta ler do DOM com retentativas para aguardar o SPA atualizar
+    const delays = [0, 100, 300, 600, 1000, 1500];
+    let attempt  = 0;
+
+    function tryUpdate() {
+      const name = getLeadNameFromDom();
+
+      if (name) {
+        titleEl.textContent = name;
+        return;
+      }
+
+      attempt++;
+      if (attempt < delays.length) {
+        setTimeout(tryUpdate, delays[attempt]);
+      } else {
+        // Todas as tentativas falharam — mantém genérico
+        titleEl.textContent = 'Negócios do Lead';
+      }
+    }
+
+    tryUpdate();
+  }
+
   function renderNegociosDropdown() {
     const dropdown = getNegociosDropdown();
     if (!dropdown) return;
 
     const options = ['<option value="">-- Novo negócio --</option>'];
     negociosCache.forEach(item => {
-      const label = `#${item.id} - ${item.nome_lead || 'Sem nome'}`;
+      const label = `#${item.id} - ${item.destino || item.nome_lead || 'Sem destino'}`;
       options.push(`<option value="${item.id}">${escapeHtml(label)}</option>`);
     });
     dropdown.innerHTML = options.join('');
@@ -241,9 +333,19 @@
     }
   }
 
-  async function loadNegocios(force = false) {
+  /**
+   * Busca todos os negócios do conversationId atual na API e atualiza o cache.
+   *
+   * @param {boolean} force      - Se true, ignora cache e recarrega do servidor.
+   * @param {boolean} autoSelect - Se true, seleciona automaticamente o negócio
+   *                               de maior ID ao terminar de carregar.
+   *                               Deve ser true apenas em trocas de conversa,
+   *                               não em recarregamentos manuais ou pós-salvar.
+   */
+  async function loadNegocios(force = false, autoSelect = false) {
     const conversationId = getConversationId();
     updateConversationIdUI();
+    updatePanelTitle();
 
     if (!conversationId) {
       currentConversationId = '';
@@ -276,13 +378,23 @@
       renderNegociosDropdown();
 
       if (editingId > 0) {
+        // Mantém o negócio em edição se ainda existir no cache (ex: após salvar)
         const active = negociosCache.find(item => Number(item.id) === editingId);
         if (active) {
           fillForm(active);
         } else {
           setEditingState(0);
         }
+      } else if (autoSelect && negociosCache.length > 0) {
+        // Troca de conversa: seleciona automaticamente o negócio de maior ID.
+        // negociosCache já vem ordenado por id DESC (mais recente primeiro).
+        const latest   = negociosCache[0];
+        const latestId = Number(latest.id);
+        setEditingState(latestId, latest);
+        const dropdown = getNegociosDropdown();
+        if (dropdown) dropdown.value = latestId;
       } else {
+        // Recarregamento manual, pós-salvar sem ID ou sem negócios: formulário limpo
         clearForm();
       }
 
@@ -411,7 +523,7 @@
 
     try {
       const response = await fetch(`${API_BASE}/get_fields.php`, {
-        headers: { 'X-Api-Key': API_KEY }
+        headers: { 'X-Admin-Key': ADMIN_KEY }
       });
       const result = await response.json();
       if (!result.success) throw new Error(result.message || 'Erro ao buscar campos.');
@@ -558,7 +670,7 @@
         try {
           const response = await fetch(`${API_BASE}/remove_field.php`, {
             method:  'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Api-Key': API_KEY },
+            headers: { 'Content-Type': 'application/json', 'X-Admin-Key': ADMIN_KEY },
             body:    JSON.stringify({ field_name: name })
           });
           const result = await response.json();
@@ -602,7 +714,7 @@
 
       const response = await fetch(`${API_BASE}/add_field.php`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Api-Key': API_KEY },
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Key': ADMIN_KEY },
         body:    JSON.stringify({ field_name: fieldName })
       });
       const result = await response.json();
@@ -721,6 +833,7 @@
       const notConfiguredEl = document.getElementById('tfq-not-configured');
       const tabsEl          = document.getElementById('tfq-tabs');
       const bodyEl          = document.getElementById('tfq-body');
+      const tabCampos       = panel.querySelector('.tfq-tab[data-tab="campos"]');
 
       if (!isConfigured()) {
         if (notConfiguredEl) notConfiguredEl.classList.remove('tfq-hidden');
@@ -732,6 +845,18 @@
       if (notConfiguredEl) notConfiguredEl.classList.add('tfq-hidden');
       if (tabsEl)          tabsEl.classList.remove('tfq-hidden');
       if (bodyEl)          bodyEl.classList.remove('tfq-hidden');
+
+      // Mostra aba Campos apenas para administradores
+      if (tabCampos) {
+        if (isAdmin()) {
+          tabCampos.classList.remove('tfq-hidden');
+        } else {
+          tabCampos.classList.add('tfq-hidden');
+          // Garante que a aba Negócios esteja ativa se Campos estava selecionada
+          const tabNegocios = panel.querySelector('.tfq-tab[data-tab="negocios"]');
+          if (tabNegocios) tabNegocios.click();
+        }
+      }
 
       loadNegocios(true);
     }
@@ -799,7 +924,8 @@
         negociosCache         = [];
         currentConversationId = '';
         setEditingState(0);
-        loadNegocios(true);
+        updatePanelTitle();
+        loadNegocios(true, true); // autoSelect: troca de conversa
       }
     }
 
@@ -829,6 +955,7 @@
 
     const conversationId = getConversationId();
     if (getConversationIdDisplay()) updateConversationIdUI();
+    updatePanelTitle();
 
     if (!conversationId) {
       currentConversationId = '';
@@ -839,10 +966,11 @@
     }
 
     if (force || conversationId !== currentConversationId) {
+      const isConversationChange = conversationId !== currentConversationId;
       currentConversationId = '';
       negociosCache         = [];
       setEditingState(0);
-      loadNegocios(true);
+      loadNegocios(true, isConversationChange); // autoSelect só em troca real de conversa
     }
   }
 
@@ -881,9 +1009,19 @@
     scheduleSync(true);
   }
 
-  window.addEventListener('tfq:conversation-change', () => {
+  // Evento customizado disparado pelo page-bridge.js ao detectar troca de URL.
+  // O detail pode conter leadName capturado pelo bridge no momento da troca.
+  window.addEventListener('tfq:conversation-change', (e) => {
+    const leadName = e.detail && e.detail.leadName ? e.detail.leadName : null;
     checkVisibility();
     scheduleSync(true);
+    // Atualiza o título imediatamente com o nome capturado pelo bridge,
+    // antes mesmo do loadNegocios terminar
+ *
+ * Novidades (v0.4.5):
+ *   - Ao trocar de conversa, o último negócio salvo é selecionado
+ *     automaticamente no dropdown e o formulário é preenchido em modo edição
+    if (leadName) updatePanelTitle(leadName);
   });
 
   window.addEventListener('focus', () => {
