@@ -15,7 +15,7 @@
  * armazenados nela. Esta operação é irreversível.
  *
  * Método:  POST
- * Header:  X-Api-Key (obrigatório)
+ * Header:  X-Admin-Key (obrigatório — somente administradores)
  * Body:    JSON { field_name: string }
  * Resposta: JSON { success: true, message }
  *           ou  { success: false, message }
@@ -32,7 +32,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Valida a chave secreta antes de qualquer operação
-validateApiKey();
+validateAdminKey();
 
 // ---------------------------------------------------------------------------
 // CAMPOS PADRÃO PROTEGIDOS

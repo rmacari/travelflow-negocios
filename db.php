@@ -6,11 +6,14 @@
  * Módulo de conexão com o banco de dados MySQL e configuração de CORS.
  *
  * Fornece funções utilitárias usadas por todos os endpoints da API:
- *   - loadConfig():    lê as credenciais do arquivo db.conf
- *   - getDb():         retorna uma instância PDO singleton da conexão
- *   - sendCors():      emite os headers HTTP necessários para CORS e
- *                      encerra requisições OPTIONS (preflight) imediatamente
- *   - validateApiKey(): valida a chave secreta enviada no header da requisição
+ *   - loadConfig():        lê as credenciais do arquivo db.conf
+ *   - getDb():             retorna uma instância PDO singleton da conexão
+ *   - sendCors():          emite os headers HTTP necessários para CORS e
+ *                          encerra requisições OPTIONS (preflight)
+ *   - validateApiKey():    valida a chave de usuário (API_KEY) — operações normais
+ *   - validateAdminKey():  valida a chave de administrador (ADMIN_KEY) —
+ *                          gerenciamento de campos (add_field, remove_field, get_fields)
+ *   - sanitizeColumnName(): sanitiza nomes de coluna para ALTER TABLE seguro
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
@@ -113,7 +116,7 @@ function sendCors()
     header('Content-Type: application/json; charset=utf-8');
     header('Access-Control-Allow-Origin: '  . $origin);
     header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, X-Api-Key');
+    header('Access-Control-Allow-Headers: Content-Type, X-Api-Key, X-Admin-Key');
 
     // Responde preflight CORS sem processar a lógica do endpoint
     if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -123,11 +126,10 @@ function sendCors()
 }
 
 /**
- * Valida a chave secreta enviada no header X-Api-Key da requisição.
+ * Valida a chave de usuário enviada no header X-Api-Key da requisição.
  *
- * Usada pelos endpoints de gerenciamento de campos (add_field, remove_field,
- * get_fields) para impedir que qualquer visitante possa alterar a estrutura
- * do banco de dados.
+ * Usada pelos endpoints de operações normais (get_negocios, save_negocio,
+ * delete_negocio) para autenticar requisições de todos os usuários.
  *
  * A chave esperada é definida na chave API_KEY do arquivo db.conf.
  * A comparação usa hash_equals() para evitar ataques de timing.
@@ -136,13 +138,39 @@ function sendCors()
  */
 function validateApiKey()
 {
-    $config     = loadConfig(__DIR__ . '/db.conf');
-    $expected   = $config['API_KEY'] ?? '';
-    $received   = $_SERVER['HTTP_X_API_KEY'] ?? '';
+    $config   = loadConfig(__DIR__ . '/db.conf');
+    $expected = $config['API_KEY'] ?? '';
+    $received = $_SERVER['HTTP_X_API_KEY'] ?? '';
 
     if ($expected === '' || !hash_equals($expected, $received)) {
         http_response_code(401);
         echo json_encode(['success' => false, 'message' => 'Chave de API inválida ou ausente.']);
+        exit;
+    }
+}
+
+/**
+ * Valida a chave de administrador enviada no header X-Admin-Key da requisição.
+ *
+ * Usada exclusivamente pelos endpoints de gerenciamento de campos
+ * (get_fields, add_field, remove_field) para restringir essas operações
+ * destrutivas apenas a usuários administradores.
+ *
+ * A chave esperada é definida na chave ADMIN_KEY do arquivo db.conf,
+ * que deve ser diferente da API_KEY e compartilhada apenas com admins.
+ * A comparação usa hash_equals() para evitar ataques de timing.
+ *
+ * Em caso de chave ausente ou inválida, retorna 403 e encerra a execução.
+ */
+function validateAdminKey()
+{
+    $config   = loadConfig(__DIR__ . '/db.conf');
+    $expected = $config['ADMIN_KEY'] ?? '';
+    $received = $_SERVER['HTTP_X_ADMIN_KEY'] ?? '';
+
+    if ($expected === '' || !hash_equals($expected, $received)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Acesso negado. Chave de administrador inválida ou ausente.']);
         exit;
     }
 }

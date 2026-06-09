@@ -7,6 +7,7 @@
 #   1. Copie este arquivo para db.conf (mesmo diretório)
 #   2. Preencha os valores reais abaixo
 #   3. NUNCA envie db.conf para repositórios públicos (git, etc.)
+#   4. Configure o servidor para bloquear acesso direto a arquivos .conf
 #
 # Autor:   Ricardo Macari
 # Contato: macari@gmail.com
@@ -22,7 +23,13 @@ DB_PASS=sua_senha
 # Origem permitida para requisições CORS (domínio do Travel Flow CRM)
 ALLOWED_ORIGIN=https://travelflow.tur.br
 
-# Chave secreta para os endpoints de gerenciamento de campos (add_field,
-# remove_field, get_fields). Use uma string longa e aleatória.
-# Exemplo de como gerar uma: openssl rand -hex 32
+# Chave de API — usada por todos os usuários para operações normais
+# (salvar, buscar e excluir negócios)
+# Gere com: openssl rand -hex 32
 API_KEY=substitua_por_uma_chave_secreta_longa_e_aleatoria
+
+# Chave de administrador — necessária para gerenciar campos (add_field,
+# remove_field, get_fields). Deve ser diferente da API_KEY.
+# Somente informe esta chave nas Opções da extensão de usuários administradores.
+# Gere com: openssl rand -hex 32
+ADMIN_KEY=substitua_por_outra_chave_secreta_longa_e_aleatoria

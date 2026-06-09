@@ -11,7 +11,7 @@
  * dinamicamente o formulário de negócios.
  *
  * Método:   GET
- * Header:   X-Api-Key (obrigatório)
+ * Header:   X-Admin-Key (obrigatório — somente administradores)
  * Resposta: JSON { success: true, fields: [...] } onde cada item contém:
  *           { name, label, type, is_default, removable }
  *
@@ -27,7 +27,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Valida a chave secreta antes de qualquer operação
-validateApiKey();
+validateAdminKey();
 
 // ---------------------------------------------------------------------------
 // CAMPOS PADRÃO DO SISTEMA
