@@ -1,17 +1,17 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negocios — add_field.php
+ * Travel Flow Negócios — add_field.php
  * =============================================================================
  * Endpoint da API para adição de um novo campo (coluna) na tabela lead_negocios.
  *
  * Executa um ALTER TABLE ... ADD COLUMN no banco MySQL para criar uma nova
- * coluna do tipo VARCHAR(255). O nome da coluna é sanitizado rigorosamente
- * para prevenir SQL injection. Verifica se a coluna já existe antes de criar.
+ * coluna. O nome da coluna é sanitizado rigorosamente para prevenir SQL
+ * injection. Verifica se a coluna já existe antes de criar.
  *
  * Método:  POST
  * Header:  X-Admin-Key (obrigatório — somente administradores)
- * Body:    JSON { field_name: string }
+ * Body:    JSON { field_name, field_label, field_type, field_options }
  *            field_name — nome da coluna (apenas letras minúsculas,
  *                         números e underscores, mínimo 2 caracteres)
  * Resposta: JSON { success: true, message, field_name }
@@ -19,7 +19,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negocios
+ * Projeto: Travel Flow Negócios
  * =============================================================================
  */
 
@@ -58,6 +58,21 @@ try {
     exit;
 }
 
+$fieldLabel = trim((string) ($data['field_label'] ?? ''));
+$fieldType  = normalizeFieldType($data['field_type'] ?? 'text');
+$options    = normalizeFieldOptions($data['field_options'] ?? []);
+
+if ($fieldLabel === '') {
+    $fieldLabel = getGeneratedFieldLabel($fieldName);
+}
+
+if ($fieldType === 'select' && !in_array('', $options, true)) {
+    array_unshift($options, '');
+}
+if ($fieldType !== 'select') {
+    $options = [];
+}
+
 // ---------------------------------------------------------------------------
 // VERIFICAÇÃO DE EXISTÊNCIA
 // Checa se já existe uma coluna com esse nome para evitar erro no ALTER TABLE.
@@ -88,25 +103,46 @@ try {
 
     // ---------------------------------------------------------------------------
     // CRIAÇÃO DA COLUNA
-    // Todos os campos personalizados são VARCHAR(255) NOT NULL DEFAULT ''.
+    // O tipo visual do campo define apenas o tipo seguro da coluna criada.
     // O nome da coluna é inserido diretamente no SQL pois já foi sanitizado
     // por sanitizeColumnName() — parâmetros PDO não funcionam em identificadores.
     // ---------------------------------------------------------------------------
+    $columnSql = getColumnSqlForFieldType($fieldType);
     $db->exec("
         ALTER TABLE lead_negocios
-        ADD COLUMN `{$fieldName}` VARCHAR(255) NOT NULL DEFAULT ''
+        ADD COLUMN `{$fieldName}` {$columnSql}
     ");
+
+    $displayOrder = count(getFieldDefinitions()) + 1;
+    $config = $db->prepare("
+        INSERT INTO lead_negocio_field_config
+            (field_name, field_label, field_type, field_options, display_order)
+        VALUES
+            (:field_name, :field_label, :field_type, :field_options, :display_order)
+        ON DUPLICATE KEY UPDATE
+            field_label = VALUES(field_label),
+            field_type = VALUES(field_type),
+            field_options = VALUES(field_options),
+            display_order = VALUES(display_order)
+    ");
+    $config->execute([
+        'field_name'    => $fieldName,
+        'field_label'   => $fieldLabel,
+        'field_type'    => $fieldType,
+        'field_options' => encodeFieldOptions($options),
+        'display_order' => $displayOrder,
+    ]);
 
     echo json_encode([
         'success'    => true,
         'message'    => "Campo '{$fieldName}' adicionado com sucesso.",
         'field_name' => $fieldName,
-    ]);
+    ], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
     http_response_code(500);
     echo json_encode([
         'success' => false,
         'message' => 'Erro ao adicionar campo.',
         'error'   => $e->getMessage()
-    ]);
+    ], JSON_UNESCAPED_UNICODE);
 }

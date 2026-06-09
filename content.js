@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * Travel Flow Negocios — content.js
+ * Travel Flow Negócios — content.js
  * =============================================================================
  * Extensão Chrome para o Travel Flow CRM (travelflow.tur.br)
  *
@@ -36,7 +36,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negocios
+ * Projeto: Travel Flow Negócios
  * =============================================================================
  */
 (function () {
@@ -85,16 +85,75 @@
     return { 'X-Admin-Key': ADMIN_KEY, ...extra };
   }
 
+  async function fetchJson(url, options = {}, timeoutMs = 15000) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        cache: 'no-store',
+        ...options,
+        signal: controller.signal
+      });
+      const text = await response.text();
+      let result = {};
+
+      if (text) {
+        try {
+          result = JSON.parse(text);
+        } catch {
+          throw new Error(
+            response.ok
+              ? 'Resposta inválida do servidor. Verifique se a URL aponta para os arquivos PHP corretos.'
+              : `Servidor retornou HTTP ${response.status} com resposta inválida.`
+          );
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(result.message || `Servidor retornou HTTP ${response.status}.`);
+      }
+
+      if (result.success === false) {
+        throw new Error(result.message || 'A operação não foi concluída pelo servidor.');
+      }
+
+      return result;
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        throw new Error('Tempo de conexão esgotado. Verifique o servidor e tente novamente.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
   const defaultFields = [
     { key: 'nome_lead',        label: 'Nome do Lead',               type: 'text',     auto: true },
     { key: 'email',            label: 'Email',                      type: 'text' },
     { key: 'destino',          label: 'Destino',                    type: 'text' },
+    {
+      key: 'status_negocio',
+      label: 'Status do Negócio',
+      type: 'select',
+      options: ['', 'Novo', 'Em atendimento', 'Cotação enviada', 'Aguardando retorno', 'Fechado', 'Perdido']
+    },
+    {
+      key: 'temperatura_lead',
+      label: 'Temperatura do Lead',
+      type: 'select',
+      options: ['', 'Frio', 'Morno', 'Quente']
+    },
+    { key: 'proximo_contato',  label: 'Próximo Contato',            type: 'date' },
+    { key: 'valor_estimado',   label: 'Valor Estimado',             type: 'currency' },
+    { key: 'responsavel',      label: 'Responsável',                type: 'text' },
     { key: 'data_viagem',      label: 'Data da Viagem',             type: 'text' },
     { key: 'duracao_viagem',   label: 'Duração da Viagem',          type: 'text' },
-    { key: 'numero_viajantes', label: 'Nº de Viajantes',            type: 'text' },
+    { key: 'numero_viajantes', label: 'Nº de Viajantes',            type: 'number' },
     { key: 'idade_viajantes',  label: 'Idade dos Viajantes',        type: 'text' },
     { key: 'cidade_origem',    label: 'Cidade de Origem',           type: 'text' },
-    { key: 'orcamento',        label: 'Orçamento',                  type: 'text' },
+    { key: 'orcamento',        label: 'Orçamento',                  type: 'currency' },
     {
       key: 'tipo_compra',
       label: 'Tipo de Compra',
@@ -123,6 +182,7 @@
   let syncScheduled             = false;
   let negociosCache             = [];
   let editingId                 = 0;
+  let lastFormSignature         = '';
   let visibilityCheckInterval   = null;
   let lastCheckedConversationId = '';
   let observerDebounceTimer     = null;
@@ -170,16 +230,19 @@
   }
 
   function createField(field) {
+    const fieldKey = escapeHtml(field.key);
+    const fieldLabel = escapeHtml(field.label || field.key);
     const autoHint = field.auto
       ? '<span class="tfq-auto-hint" title="Preenchido automaticamente">⚡</span>'
       : '';
 
     if (field.type === 'select') {
+      const options = Array.isArray(field.options) ? field.options : [''];
       return `
         <div class="tfq-row">
-          <label class="tfq-label" for="tfq-${field.key}">${field.label}${autoHint}</label>
-          <select class="tfq-select" id="tfq-${field.key}">
-            ${field.options.map(option =>
+          <label class="tfq-label" for="tfq-${fieldKey}">${fieldLabel}${autoHint}</label>
+          <select class="tfq-select" id="tfq-${fieldKey}">
+            ${options.map(option =>
               `<option value="${escapeHtml(option)}">${escapeHtml(option || 'Selecione')}</option>`
             ).join('')}
           </select>
@@ -190,16 +253,24 @@
     if (field.type === 'textarea') {
       return `
         <div class="tfq-row">
-          <label class="tfq-label" for="tfq-${field.key}">${field.label}${autoHint}</label>
-          <textarea class="tfq-textarea" id="tfq-${field.key}" rows="4"></textarea>
+          <label class="tfq-label" for="tfq-${fieldKey}">${fieldLabel}${autoHint}</label>
+          <textarea class="tfq-textarea" id="tfq-${fieldKey}" rows="4"></textarea>
         </div>
       `;
     }
 
+    const inputType = field.type === 'date'
+      ? 'date'
+      : field.type === 'number'
+        ? 'number'
+        : 'text';
+    const inputMode = field.type === 'currency' ? ' inputmode="decimal"' : '';
+    const placeholder = field.type === 'currency' ? ' placeholder="R$ 0,00"' : '';
+
     return `
       <div class="tfq-row">
-        <label class="tfq-label" for="tfq-${field.key}">${field.label}${autoHint}</label>
-        <input class="tfq-input" id="tfq-${field.key}" type="text" />
+        <label class="tfq-label" for="tfq-${fieldKey}">${fieldLabel}${autoHint}</label>
+        <input class="tfq-input" id="tfq-${fieldKey}" type="${inputType}"${inputMode}${placeholder} />
       </div>
     `;
   }
@@ -211,36 +282,15 @@
     }
 
     try {
-      const response = await fetch(`${API_BASE}/get_form_fields.php?_t=${Date.now()}`, {
-        cache:   'no-store',
+      const result = await fetchJson(`${API_BASE}/get_form_fields.php?_t=${Date.now()}`, {
         headers: apiHeaders()
       });
-      const result = await response.json();
 
       if (!result.success || !Array.isArray(result.fields) || result.fields.length === 0) {
         throw new Error(result.message || 'Erro ao buscar campos do formulário.');
       }
 
-      const savedOrder  = await getSavedFieldOrder();
-      const savedLabels = await getSavedFieldLabels();
-      const incoming    = result.fields.map(field => ({
-        ...field,
-        label: savedLabels[field.key] || field.label || field.key
-      }));
-
-      if (savedOrder.length > 0) {
-        const ordered = [];
-        savedOrder.forEach(name => {
-          const field = incoming.find(item => item.key === name);
-          if (field) ordered.push(field);
-        });
-        incoming.forEach(field => {
-          if (!ordered.find(item => item.key === field.key)) ordered.push(field);
-        });
-        fields = ordered;
-      } else {
-        fields = incoming;
-      }
+      fields = result.fields;
     } catch (error) {
       fields = [...defaultFields];
     }
@@ -313,6 +363,29 @@
     return data;
   }
 
+  function getFormSignature() {
+    const data = {};
+    fields.forEach(field => {
+      const el = document.getElementById(`tfq-${field.key}`);
+      data[field.key] = el ? el.value.trim() : '';
+    });
+    return JSON.stringify(data);
+  }
+
+  function markFormPristine() {
+    lastFormSignature = getFormSignature();
+  }
+
+  function hasUnsavedChanges() {
+    const panel = getPanel();
+    if (!panel || !panel.classList.contains('tfq-open') || !lastFormSignature) return false;
+    return getFormSignature() !== lastFormSignature;
+  }
+
+  function confirmDiscardChanges(message = 'Há alterações não salvas neste negócio. Deseja descartá-las?') {
+    return !hasUnsavedChanges() || window.confirm(message);
+  }
+
   function setEditingState(id, item) {
     editingId = id || 0;
     const deleteBtn = document.getElementById('tfq-delete');
@@ -328,6 +401,7 @@
       if (getEditingBadge()) getEditingBadge().textContent = '';
       if (deleteBtn)         deleteBtn.disabled            = true;
     }
+    markFormPristine();
   }
 
   function updateConversationIdUI() {
@@ -397,6 +471,11 @@
     const dropdown = getNegociosDropdown();
     if (!dropdown) return;
 
+    if (!confirmDiscardChanges('Há alterações não salvas. Deseja trocar de negócio e descartá-las?')) {
+      dropdown.value = editingId > 0 ? String(editingId) : '';
+      return;
+    }
+
     const selectedId = Number(dropdown.value);
     if (selectedId > 0) {
       const item = negociosCache.find(n => Number(n.id) === selectedId);
@@ -442,11 +521,10 @@
     setStatus('Carregando negócios...', '');
 
     try {
-      const response = await fetch(
+      const result = await fetchJson(
         `${API_BASE}/get_negocios.php?conversation_id=${encodeURIComponent(conversationId)}&_t=${Date.now()}`,
         { headers: apiHeaders() }
       );
-      const result = await response.json();
 
       if (!result.success) {
         throw new Error(result.message || 'Erro ao buscar negócios.');
@@ -460,6 +538,7 @@
         const active = negociosCache.find(item => Number(item.id) === editingId);
         if (active) {
           fillForm(active);
+          markFormPristine();
         } else {
           setEditingState(0);
         }
@@ -474,6 +553,7 @@
       } else {
         // Recarregamento manual, pós-salvar sem ID ou sem negócios: formulário limpo
         clearForm();
+        markFormPristine();
       }
 
       const count = negociosCache.length;
@@ -507,12 +587,11 @@
     try {
       setStatus(editingId > 0 ? 'Atualizando negócio...' : 'Salvando negócio...', '');
 
-      const response = await fetch(`${API_BASE}/save_negocio.php`, {
+      const result = await fetchJson(`${API_BASE}/save_negocio.php`, {
         method:  'POST',
         headers: apiHeaders({ 'Content-Type': 'application/json' }),
         body:    JSON.stringify(payload)
       });
-      const result = await response.json();
 
       if (!result.success) {
         throw new Error(result.message || 'Erro ao salvar negócio.');
@@ -534,6 +613,7 @@
           setEditingState(0);
         }
       }
+      markFormPristine();
 
       setStatus(result.message || 'Negócio salvo com sucesso.', 'success');
 
@@ -557,12 +637,11 @@
     try {
       setStatus('Excluindo negócio...', '');
 
-      const response = await fetch(`${API_BASE}/delete_negocio.php`, {
+      const result = await fetchJson(`${API_BASE}/delete_negocio.php`, {
         method:  'POST',
         headers: apiHeaders({ 'Content-Type': 'application/json' }),
         body:    JSON.stringify({ id: editingId, conversation_id: conversationId })
       });
-      const result = await response.json();
 
       if (!result.success) {
         throw new Error(result.message || 'Erro ao excluir negócio.');
@@ -592,6 +671,7 @@
     currentConversationId = '';
     negociosCache         = [];
     editingId             = 0;
+    lastFormSignature     = '';
   }
 
   async function loadFields() {
@@ -599,76 +679,59 @@
     if (statusEl) { statusEl.textContent = 'Carregando campos...'; statusEl.className = ''; }
 
     try {
-      const response = await fetch(`${API_BASE}/get_fields.php?_t=${Date.now()}`, {
-        cache:   'no-store',
+      const result = await fetchJson(`${API_BASE}/get_fields.php?_t=${Date.now()}`, {
         headers: adminHeaders()
       });
-      const result = await response.json();
-      if (!result.success) throw new Error(result.message || 'Erro ao buscar campos.');
 
-      const savedOrder = await getSavedFieldOrder();
-      const dbFields   = result.fields;
-
-      let ordered = [];
-      if (savedOrder.length > 0) {
-        savedOrder.forEach(name => {
-          const f = dbFields.find(x => x.name === name);
-          if (f) ordered.push(f);
-        });
-        dbFields.forEach(f => {
-          if (!ordered.find(x => x.name === f.name)) ordered.push(f);
-        });
-      } else {
-        ordered = dbFields;
-      }
-
-      renderFieldsList(ordered);
-      if (statusEl) { statusEl.textContent = `${ordered.length} campo(s) encontrado(s).`; statusEl.className = 'success'; }
+      const dbFields = Array.isArray(result.fields) ? result.fields : [];
+      await renderFieldsList(dbFields);
+      if (statusEl) { statusEl.textContent = `${dbFields.length} campo(s) encontrado(s).`; statusEl.className = 'success'; }
 
     } catch (error) {
       if (statusEl) { statusEl.textContent = `Erro: ${error.message}`; statusEl.className = 'error'; }
     }
   }
 
-  function getSavedFieldOrder() {
-    return new Promise(resolve => {
-      try {
-        chrome.storage.local.get(['tfq_field_order', 'tfq_field_labels'], result => {
-          resolve(result.tfq_field_order || []);
-        });
-      } catch (e) {
-        resolve([]);
+  function fieldOptionsToText(options) {
+    return Array.isArray(options) ? options.filter(option => option !== '').join('\n') : '';
+  }
+
+  function collectFieldConfigsFromList(container, orderedFields) {
+    return orderedFields.map(field => {
+      const name = field.name;
+      const labelInput = container.querySelector(`.tfq-field-label-input[data-name="${name}"]`);
+      const typeSelect = container.querySelector(`.tfq-field-type-select[data-name="${name}"]`);
+      const optionsInput = container.querySelector(`.tfq-field-options-input[data-name="${name}"]`);
+      const type = typeSelect ? typeSelect.value : field.type || 'text';
+      const options = optionsInput
+        ? optionsInput.value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
+        : [];
+
+      if (type === 'select') {
+        options.unshift('');
       }
+
+      return {
+        name,
+        label: labelInput ? labelInput.value.trim() : field.label || name,
+        type,
+        options: type === 'select' ? options : []
+      };
     });
   }
 
-  function getSavedFieldLabels() {
-    return new Promise(resolve => {
-      try {
-        chrome.storage.local.get(['tfq_field_labels'], result => {
-          resolve(result.tfq_field_labels || {});
-        });
-      } catch (e) {
-        resolve({});
-      }
+  async function saveFieldConfigs(configs) {
+    const result = await fetchJson(`${API_BASE}/save_field_config.php`, {
+      method:  'POST',
+      headers: adminHeaders({ 'Content-Type': 'application/json' }),
+      body:    JSON.stringify({ fields: configs })
     });
-  }
-
-  function saveFieldConfig(order, labels) {
-    return new Promise(resolve => {
-      try {
-        chrome.storage.local.set({ tfq_field_order: order, tfq_field_labels: labels }, resolve);
-      } catch (e) {
-        resolve();
-      }
-    });
+    return result;
   }
 
   async function renderFieldsList(fieldsList) {
     const container = document.getElementById('tfq-fields-list');
     if (!container) return;
-
-    const savedLabels = await getSavedFieldLabels();
 
     if (fieldsList.length === 0) {
       container.innerHTML = '<div class="tfq-empty">Nenhum campo encontrado.</div>';
@@ -676,10 +739,12 @@
     }
 
     container.innerHTML = fieldsList.map((field, index) => {
-      const label     = savedLabels[field.name] || field.name;
+      const label     = field.label || field.name;
       const isFirst   = index === 0;
       const isLast    = index === fieldsList.length - 1;
       const removable = field.removable;
+      const type      = field.type || 'text';
+      const optionsText = fieldOptionsToText(field.options);
 
       return `
         <div class="tfq-field-item" data-name="${escapeHtml(field.name)}" data-index="${index}">
@@ -691,10 +756,19 @@
             <div class="tfq-field-info">
               <input class="tfq-field-label-input" data-name="${escapeHtml(field.name)}" value="${escapeHtml(label)}" type="text" placeholder="Rótulo do campo" />
               <span class="tfq-field-key">${escapeHtml(field.name)}${field.is_default ? ' <em>padrão</em>' : ''}</span>
+              <select class="tfq-field-type-select" data-name="${escapeHtml(field.name)}">
+                <option value="text" ${type === 'text' ? 'selected' : ''}>Texto</option>
+                <option value="textarea" ${type === 'textarea' ? 'selected' : ''}>Texto longo</option>
+                <option value="select" ${type === 'select' ? 'selected' : ''}>Lista</option>
+                <option value="date" ${type === 'date' ? 'selected' : ''}>Data</option>
+                <option value="number" ${type === 'number' ? 'selected' : ''}>Número</option>
+                <option value="currency" ${type === 'currency' ? 'selected' : ''}>Valor</option>
+              </select>
+              <textarea class="tfq-field-options-input ${type === 'select' ? '' : 'tfq-hidden'}" data-name="${escapeHtml(field.name)}" rows="3" placeholder="Uma opção por linha">${escapeHtml(optionsText)}</textarea>
             </div>
           </div>
           <div class="tfq-item-actions">
-            <button class="tfq-mini-btn tfq-field-save-label" data-name="${escapeHtml(field.name)}" title="Salvar rótulo">✓</button>
+            <button class="tfq-mini-btn tfq-field-save-config" data-name="${escapeHtml(field.name)}" title="Salvar configuração">✓</button>
             ${removable
               ? `<button class="tfq-mini-btn tfq-mini-btn-danger tfq-field-remove" data-name="${escapeHtml(field.name)}" title="Remover campo">✕</button>`
               : ''}
@@ -709,8 +783,8 @@
         if (idx <= 0) return;
         const reordered = [...fieldsList];
         [reordered[idx - 1], reordered[idx]] = [reordered[idx], reordered[idx - 1]];
-        await persistFieldOrder(reordered);
-        renderFieldsList(reordered);
+        await persistFieldConfig(container, reordered);
+        await renderFieldsList(reordered);
         applyFieldOrderToForm(reordered.map(field => field.name));
       });
     });
@@ -721,24 +795,36 @@
         if (idx >= fieldsList.length - 1) return;
         const reordered = [...fieldsList];
         [reordered[idx], reordered[idx + 1]] = [reordered[idx + 1], reordered[idx]];
-        await persistFieldOrder(reordered);
-        renderFieldsList(reordered);
+        await persistFieldConfig(container, reordered);
+        await renderFieldsList(reordered);
         applyFieldOrderToForm(reordered.map(field => field.name));
       });
     });
 
-    container.querySelectorAll('.tfq-field-save-label').forEach(btn => {
+    container.querySelectorAll('.tfq-field-type-select').forEach(select => {
+      select.addEventListener('change', () => {
+        const optionsInput = container.querySelector(`.tfq-field-options-input[data-name="${select.dataset.name}"]`);
+        if (!optionsInput) return;
+        optionsInput.classList.toggle('tfq-hidden', select.value !== 'select');
+      });
+    });
+
+    container.querySelectorAll('.tfq-field-save-config').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const name     = btn.dataset.name;
-        const input    = container.querySelector(`.tfq-field-label-input[data-name="${name}"]`);
-        const newLabel = input ? input.value.trim() : '';
-        if (!newLabel) return;
-        const labels   = await getSavedFieldLabels();
-        labels[name]   = newLabel;
-        const order    = fieldsList.map(f => f.name);
-        await saveFieldConfig(order, labels);
         const statusEl = document.getElementById('tfq-fields-status');
-        if (statusEl) { statusEl.textContent = `Rótulo de "${name}" salvo.`; statusEl.className = 'success'; }
+        try {
+          if (statusEl) { statusEl.textContent = 'Salvando configuração...'; statusEl.className = ''; }
+          const currentData = getFormData();
+          const wasDirty = hasUnsavedChanges();
+          await persistFieldConfig(container, fieldsList);
+          await loadFormFields();
+          renderFormFields();
+          fillForm(currentData);
+          if (!wasDirty) markFormPristine();
+          if (statusEl) { statusEl.textContent = 'Configuração salva.'; statusEl.className = 'success'; }
+        } catch (error) {
+          if (statusEl) { statusEl.textContent = `Erro: ${error.message}`; statusEl.className = 'error'; }
+        }
       });
     });
 
@@ -752,22 +838,19 @@
         if (statusEl) { statusEl.textContent = 'Removendo campo...'; statusEl.className = ''; }
 
         try {
-          const response = await fetch(`${API_BASE}/remove_field.php`, {
+          const result = await fetchJson(`${API_BASE}/remove_field.php`, {
             method:  'POST',
             headers: adminHeaders({ 'Content-Type': 'application/json' }),
             body:    JSON.stringify({ field_name: name })
           });
-          const result = await response.json();
-          if (!result.success) throw new Error(result.message);
-
-          const labels   = await getSavedFieldLabels();
-          delete labels[name];
-          const newOrder = fieldsList.filter(f => f.name !== name).map(f => f.name);
-          await saveFieldConfig(newOrder, labels);
 
           if (statusEl) { statusEl.textContent = result.message; statusEl.className = 'success'; }
+          const currentData = getFormData();
+          const wasDirty = hasUnsavedChanges();
           await loadFormFields();
           renderFormFields();
+          fillForm(currentData);
+          if (!wasDirty) markFormPristine();
           await loadFields();
 
         } catch (error) {
@@ -777,18 +860,31 @@
     });
   }
 
-  async function persistFieldOrder(orderedFields) {
-    const labels = await getSavedFieldLabels();
-    await saveFieldConfig(orderedFields.map(f => f.name), labels);
+  async function persistFieldConfig(container, orderedFields) {
+    const configs = collectFieldConfigsFromList(container, orderedFields);
+    await saveFieldConfigs(configs);
   }
 
   async function addField() {
-    const input     = document.getElementById('tfq-new-field-name');
-    const statusEl  = document.getElementById('tfq-fields-status');
-    const fieldName = input ? input.value.trim().toLowerCase().replace(/\s+/g, '_') : '';
+    const input        = document.getElementById('tfq-new-field-name');
+    const labelInput   = document.getElementById('tfq-new-field-label');
+    const typeInput    = document.getElementById('tfq-new-field-type');
+    const optionsInput = document.getElementById('tfq-new-field-options');
+    const statusEl     = document.getElementById('tfq-fields-status');
+    const fieldName    = input ? input.value.trim().toLowerCase().replace(/\s+/g, '_') : '';
+    const fieldLabel   = labelInput ? labelInput.value.trim() : '';
+    const fieldType    = typeInput ? typeInput.value : 'text';
+    const fieldOptions = optionsInput
+      ? optionsInput.value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
+      : [];
 
     if (!fieldName) {
       if (statusEl) { statusEl.textContent = 'Informe um nome para o campo.'; statusEl.className = 'error'; }
+      return;
+    }
+
+    if (fieldType === 'select' && fieldOptions.length === 0) {
+      if (statusEl) { statusEl.textContent = 'Informe ao menos uma opção para campos do tipo lista.'; statusEl.className = 'error'; }
       return;
     }
 
@@ -798,18 +894,27 @@
     try {
       if (statusEl) { statusEl.textContent = 'Adicionando campo...'; statusEl.className = ''; }
 
-      const response = await fetch(`${API_BASE}/add_field.php`, {
+      const result = await fetchJson(`${API_BASE}/add_field.php`, {
         method:  'POST',
         headers: adminHeaders({ 'Content-Type': 'application/json' }),
-        body:    JSON.stringify({ field_name: fieldName })
+        body:    JSON.stringify({
+          field_name:    fieldName,
+          field_label:   fieldLabel,
+          field_type:    fieldType,
+          field_options: fieldOptions
+        })
       });
-      const result = await response.json();
-      if (!result.success) throw new Error(result.message);
 
       if (input) input.value = '';
+      if (labelInput) labelInput.value = '';
+      if (optionsInput) optionsInput.value = '';
       if (statusEl) { statusEl.textContent = result.message; statusEl.className = 'success'; }
+      const currentData = getFormData();
+      const wasDirty = hasUnsavedChanges();
       await loadFormFields();
       renderFormFields();
+      fillForm(currentData);
+      if (!wasDirty) markFormPristine();
       await loadFields();
 
     } catch (error) {
@@ -844,6 +949,7 @@
       <div id="tfq-not-configured" class="tfq-not-configured tfq-hidden">
         <p>⚠️ Extensão não configurada.</p>
         <p>Clique com o botão direito no ícone da extensão → <strong>Opções</strong> e preencha a URL do servidor e a API Key.</p>
+        <button class="tfq-btn tfq-btn-primary tfq-btn-small" id="tfq-open-options" type="button">Abrir configurações</button>
       </div>
 
       <div id="tfq-tabs">
@@ -893,6 +999,25 @@
               <label class="tfq-label" for="tfq-new-field-name">Nome do campo (snake_case)</label>
               <input class="tfq-input" id="tfq-new-field-name" type="text" placeholder="ex: numero_voo" />
             </div>
+            <div class="tfq-row" style="margin-top:10px;">
+              <label class="tfq-label" for="tfq-new-field-label">Rótulo exibido</label>
+              <input class="tfq-input" id="tfq-new-field-label" type="text" placeholder="ex: Número do voo" />
+            </div>
+            <div class="tfq-row" style="margin-top:10px;">
+              <label class="tfq-label" for="tfq-new-field-type">Tipo do campo</label>
+              <select class="tfq-select" id="tfq-new-field-type">
+                <option value="text">Texto</option>
+                <option value="textarea">Texto longo</option>
+                <option value="select">Lista</option>
+                <option value="date">Data</option>
+                <option value="number">Número</option>
+                <option value="currency">Valor</option>
+              </select>
+            </div>
+            <div class="tfq-row tfq-hidden" id="tfq-new-field-options-row" style="margin-top:10px;">
+              <label class="tfq-label" for="tfq-new-field-options">Opções da lista</label>
+              <textarea class="tfq-textarea" id="tfq-new-field-options" rows="3" placeholder="Uma opção por linha"></textarea>
+            </div>
             <div class="tfq-actions">
               <button class="tfq-btn tfq-btn-primary" id="tfq-add-field-btn" type="button">Adicionar campo</button>
             </div>
@@ -900,7 +1025,7 @@
 
           <section class="tfq-card">
             <h3>Campos do formulário</h3>
-            <p class="tfq-fields-hint">Use ↑↓ para reordenar. Edite o rótulo e clique ✓ para salvar. Campos padrão não podem ser removidos.</p>
+            <p class="tfq-fields-hint">Use ↑↓ para reordenar. Edite rótulo, tipo e opções e clique ✓ para salvar no servidor. Campos padrão não podem ser removidos.</p>
             <div id="tfq-fields-list" style="margin-top:10px;"></div>
             <div id="tfq-fields-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
           </section>
@@ -979,15 +1104,24 @@
     const dropdown = panel.querySelector('#tfq-negocios-dropdown');
     if (dropdown) dropdown.addEventListener('change', onNegocioSelected);
 
+    const openOptionsBtn = panel.querySelector('#tfq-open-options');
+    if (openOptionsBtn) {
+      openOptionsBtn.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ type: 'TFQ_OPEN_OPTIONS' });
+      });
+    }
+
     panel.querySelector('#tfq-close').addEventListener('click', closePanel);
     panel.querySelector('#tfq-save').addEventListener('click', saveNegocio);
     panel.querySelector('#tfq-delete').addEventListener('click', deleteNegocio);
     panel.querySelector('#tfq-reload').addEventListener('click', () => {
+      if (!confirmDiscardChanges('Há alterações não salvas. Deseja recarregar e descartá-las?')) return;
       negociosCache         = [];
       currentConversationId = '';
       loadNegocios(true);
     });
     panel.querySelector('#tfq-cancel').addEventListener('click', () => {
+      if (!confirmDiscardChanges()) return;
       setEditingState(0);
       const dd = getNegociosDropdown();
       if (dd) dd.value = '';
@@ -997,6 +1131,10 @@
     panel.querySelector('#tfq-add-field-btn').addEventListener('click', addField);
     panel.querySelector('#tfq-new-field-name').addEventListener('keydown', e => {
       if (e.key === 'Enter') addField();
+    });
+    panel.querySelector('#tfq-new-field-type').addEventListener('change', e => {
+      const row = panel.querySelector('#tfq-new-field-options-row');
+      if (row) row.classList.toggle('tfq-hidden', e.target.value !== 'select');
     });
 
     updateConversationIdUI();
@@ -1085,6 +1223,28 @@
     }
   }
 
+  function togglePanelFromAction() {
+    if (!hasValidConversation()) {
+      return false;
+    }
+
+    ensurePanel();
+    const toggle = getToggle();
+    if (!toggle) return false;
+    toggle.click();
+    return true;
+  }
+
+  if (chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message && message.type === 'TFQ_TOGGLE_PANEL') {
+        sendResponse({ ok: togglePanelFromAction() });
+        return true;
+      }
+      return false;
+    });
+  }
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       lastCheckedConversationId = getConversationId();
@@ -1113,6 +1273,12 @@
   window.addEventListener('focus', () => {
     checkVisibility();
     scheduleSync(false);
+  });
+
+  window.addEventListener('beforeunload', event => {
+    if (!hasUnsavedChanges()) return;
+    event.preventDefault();
+    event.returnValue = '';
   });
 
   const observer = new MutationObserver(() => {

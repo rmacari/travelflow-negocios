@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * Travel Flow Negocios — options.js
+ * Travel Flow Negócios — options.js
  * =============================================================================
  * Lógica da página de configuração da extensão Chrome.
  *
@@ -17,7 +17,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negocios
+ * Projeto: Travel Flow Negócios
  * =============================================================================
  */
 
@@ -50,6 +50,50 @@ function setStatus(message, type) {
 function clearStatus() {
   statusEl.textContent = '';
   statusEl.className   = 'opt-status';
+}
+
+async function fetchJson(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      ...options,
+      signal: controller.signal
+    });
+    const text = await response.text();
+    let result = {};
+
+    if (text) {
+      try {
+        result = JSON.parse(text);
+      } catch {
+        throw new Error(
+          response.ok
+            ? 'Resposta inválida do servidor. Confira se a URL aponta para a pasta dos arquivos PHP.'
+            : `Servidor retornou HTTP ${response.status} com resposta inválida.`
+        );
+      }
+    }
+
+    if (!response.ok) {
+      throw new Error(result.message || `Servidor retornou HTTP ${response.status}.`);
+    }
+
+    if (result.success === false) {
+      throw new Error(result.message || 'A operação não foi concluída pelo servidor.');
+    }
+
+    return result;
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Tempo de conexão esgotado. Verifique se o servidor está acessível.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -140,16 +184,10 @@ async function testConnection() {
   setStatus('Testando conexão...', 'info');
 
   try {
-    const response = await fetch(
+    const result = await fetchJson(
       `${apiBase}/get_negocios.php?conversation_id=tfq_test_${Date.now()}`,
       { headers: { 'X-Api-Key': apiKey } }
     );
-
-    if (!response.ok) {
-      throw new Error(`Servidor retornou HTTP ${response.status}`);
-    }
-
-    const result = await response.json();
 
     if (result.success !== undefined) {
       setStatus('Conexão bem-sucedida! O servidor está respondendo corretamente. ✓', 'success');

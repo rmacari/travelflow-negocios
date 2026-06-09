@@ -1,5 +1,5 @@
 # =============================================================================
-# Travel Flow Negocios — db.conf.example
+# Travel Flow Negócios — db.conf.example
 # =============================================================================
 # Arquivo de configuração do backend PHP.
 #
@@ -11,7 +11,7 @@
 #
 # Autor:   Ricardo Macari
 # Contato: macari@gmail.com
-# Projeto: Travel Flow Negocios
+# Projeto: Travel Flow Negócios
 # =============================================================================
 
 # Credenciais do banco de dados MySQL

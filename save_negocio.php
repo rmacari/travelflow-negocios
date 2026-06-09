@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negocios — save_negocio.php
+ * Travel Flow Negócios — save_negocio.php
  * =============================================================================
  * Endpoint da API para criação e atualização de negócios de um atendimento.
  *
@@ -16,7 +16,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negocios
+ * Projeto: Travel Flow Negócios
  * =============================================================================
  */
 

@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * Travel Flow Negocios — content.css
+ * Travel Flow Negócios — content.css
  * =============================================================================
  * Folha de estilos do painel lateral da extensão Chrome para o Travel Flow CRM.
  *
@@ -13,7 +13,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negocios
+ * Projeto: Travel Flow Negócios
  * =============================================================================
  */
 
@@ -507,7 +507,7 @@
    --------------------------------------------------------------------------- */
 .tfq-field-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   border: 1px solid var(--tf-addon-border);
@@ -519,7 +519,7 @@
 
 .tfq-field-item-left {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
   flex: 1;
@@ -564,7 +564,26 @@
   outline: none;
 }
 
-.tfq-field-label-input:focus {
+.tfq-field-type-select,
+.tfq-field-options-input {
+  width: 100%;
+  border: 1px solid var(--tf-addon-border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--tf-addon-text);
+  padding: 5px 8px;
+  font: 500 12px/1.3 Arial, sans-serif;
+  outline: none;
+}
+
+.tfq-field-options-input {
+  resize: vertical;
+  min-height: 58px;
+}
+
+.tfq-field-label-input:focus,
+.tfq-field-type-select:focus,
+.tfq-field-options-input:focus {
   border-color: var(--tf-addon-primary);
   box-shadow: 0 0 0 2px rgba(10, 108, 116, 0.10);
 }
@@ -604,6 +623,10 @@
 
 .tfq-not-configured p + p {
   margin-top: 6px;
+}
+
+.tfq-not-configured .tfq-btn {
+  margin-top: 10px;
 }
 
 /* Classe utilitária para ocultar elementos */

@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negocios — get_negocios.php
+ * Travel Flow Negócios — get_negocios.php
  * =============================================================================
  * Endpoint da API para listagem de negócios de um atendimento.
  *
@@ -14,7 +14,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negocios
+ * Projeto: Travel Flow Negócios
  * =============================================================================
  */
 

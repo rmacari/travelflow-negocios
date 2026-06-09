@@ -1,5 +1,5 @@
 -- =============================================================================
--- Travel Flow Negocios — schema.sql
+-- Travel Flow Negócios — schema.sql
 -- =============================================================================
 -- Script de criação da tabela principal do sistema no MySQL.
 --
@@ -11,7 +11,7 @@
 --
 -- Autor:   Ricardo Macari
 -- Contato: macari@gmail.com
--- Projeto: Travel Flow Negocios
+-- Projeto: Travel Flow Negócios
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS lead_negocios (
@@ -45,6 +45,21 @@ CREATE TABLE IF NOT EXISTS lead_negocios (
 
     -- Destino da viagem (cidade, país ou região)
     destino VARCHAR(255) NOT NULL DEFAULT '',
+
+    -- Status comercial do negócio
+    status_negocio VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Temperatura comercial do lead: Frio, Morno, Quente
+    temperatura_lead VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Próxima data combinada para contato ou retorno
+    proximo_contato VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Valor estimado do negócio
+    valor_estimado VARCHAR(100) NOT NULL DEFAULT '',
+
+    -- Pessoa responsável pelo acompanhamento
+    responsavel VARCHAR(255) NOT NULL DEFAULT '',
 
     -- Data ou estimativa de viagem em texto livre (ex: "setembro de 2026")
     data_viagem VARCHAR(100) NOT NULL DEFAULT '',
@@ -98,5 +113,29 @@ CREATE TABLE IF NOT EXISTS lead_negocios (
 
     -- Índice composto para ordenação por data de atualização por atendimento
     KEY idx_conversation_updated (conversation_id, updated_at)
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lead_negocio_field_config (
+
+    -- Nome da coluna real em lead_negocios
+    field_name VARCHAR(64) NOT NULL,
+
+    -- Rótulo exibido no formulário da extensão
+    field_label VARCHAR(255) NOT NULL DEFAULT '',
+
+    -- Tipo visual do campo: text, textarea, select, date, number ou currency
+    field_type VARCHAR(20) NOT NULL DEFAULT 'text',
+
+    -- Opções do tipo select em JSON
+    field_options TEXT NULL,
+
+    -- Ordem de exibição no formulário
+    display_order INT UNSIGNED NOT NULL DEFAULT 0,
+
+    -- Data da última alteração da configuração
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (field_name)
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Travel Flow Negócios",
-  "version": "0.4.14",
+  "version": "0.5.0",
   "description": "Extensão para o Travel Flow CRM que permite salvar, organizar e acompanhar negócios de leads em um painel lateral prático, com banco de dados próprio.",
   "icons": {
     "16": "icons/icon-16.png",
@@ -18,6 +18,9 @@
     "https://*/*"
   ],
   "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_title": "Travel Flow Negócios",
     "default_icon": {

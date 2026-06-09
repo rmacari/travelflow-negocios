@@ -1,4 +1,4 @@
-# Travel Flow Negocios
+# Travel Flow Negócios
 
 Desenvolvido por **Ricardo Macari** — contato: macari@gmail.com
 
@@ -25,13 +25,13 @@ Para quem instala a extensão pela loja e já tem acesso a um servidor com o bac
 
 ### Passo 1 — Instale a extensão
 
-Acesse a [Chrome Web Store](https://chrome.google.com/webstore) e instale **Travel Flow Negocios**.
+Acesse a [Chrome Web Store](https://chrome.google.com/webstore) e instale **Travel Flow Negócios**.
 
 ### Passo 2 — Abra as configurações
 
 Após instalar, clique com o **botão direito** no ícone da extensão na barra do Chrome e selecione **"Opções"**.
 
-Ou acesse: `chrome://extensions` → Travel Flow Negocios → **Detalhes** → **Opções de extensão**
+Ou acesse: `chrome://extensions` → Travel Flow Negócios → **Detalhes** → **Opções de extensão**
 
 ### Passo 3 — Configure a conexão
 
@@ -45,7 +45,7 @@ Clique em **Salvar configurações** e depois em **Testar conexão** para confir
 
 ### Passo 4 — Pronto
 
-Acesse um atendimento no Travel Flow CRM. O botão **Negócios** aparecerá no lado direito da tela.
+Acesse um atendimento no Travel Flow CRM. O botão **Negócios** aparecerá no lado direito da tela. O clique no ícone da extensão também abre/fecha o painel quando você está em uma conversa do CRM.
 
 ---
 
@@ -68,7 +68,11 @@ delete_negocio.php
 get_fields.php
 add_field.php
 remove_field.php
+get_form_fields.php
+save_field_config.php
 schema.sql
+migrate_v2.sql
+migrate_v3.sql
 ```
 
 #### 2. Crie o banco de dados
@@ -79,7 +83,7 @@ Importe o `schema.sql` no seu banco MySQL:
 mysql -u seu_usuario -p seu_banco < schema.sql
 ```
 
-Se já tiver o banco instalado de uma versão anterior, use `migrate_v2.sql` em vez do `schema.sql`. Leia os comentários do arquivo antes de executar.
+Se já tiver o banco instalado de uma versão anterior, use `migrate_v2.sql` e depois `migrate_v3.sql` em vez do `schema.sql`. Leia os comentários dos arquivos antes de executar.
 
 #### 3. Crie o arquivo db.conf
 
@@ -136,6 +140,7 @@ Faça o download ou clone o repositório em [github.com/rmacari/travelflow-negoc
 
 ```
 manifest.json
+background.js
 content.js
 content.css
 page-bridge.js
@@ -171,14 +176,16 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 |---|---|
 | `schema.sql` | Cria a tabela `lead_negocios` do zero |
 | `migrate_v2.sql` | Migra banco existente de versão anterior para v2 |
+| `migrate_v3.sql` | Adiciona campos de acompanhamento e a tabela de configuração de campos |
 | `db.conf.example` | Modelo do arquivo de configuração |
 | `db.php` | Conexão PDO, CORS, validação de API Key e sanitização de colunas |
 | `get_negocios.php` | Lista todos os negócios de um `conversation_id` |
-| `get_form_fields.php` | Lista campos do formulário *(requer X-Api-Key)* |
+| `get_form_fields.php` | Lista campos do formulário com ordem, rótulo, tipo e opções *(requer X-Api-Key)* |
 | `save_negocio.php` | Cria ou atualiza um negócio |
 | `delete_negocio.php` | Exclui um negócio por ID |
-| `get_fields.php` | Lista as colunas atuais da tabela *(requer X-Admin-Key)* |
-| `add_field.php` | Adiciona nova coluna à tabela *(requer X-Admin-Key)* |
+| `get_fields.php` | Lista campos e metadados administrativos *(requer X-Admin-Key)* |
+| `save_field_config.php` | Salva ordem, rótulo, tipo e opções dos campos *(requer X-Admin-Key)* |
+| `add_field.php` | Adiciona nova coluna e sua configuração visual *(requer X-Admin-Key)* |
 | `remove_field.php` | Remove coluna personalizada da tabela *(requer X-Admin-Key)* |
 
 ### Extensão Chrome
@@ -186,6 +193,7 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 | Arquivo | Descrição |
 |---|---|
 | `manifest.json` | Manifesto da extensão Chrome/Chromium |
+| `background.js` | Clique no ícone: abre opções ou alterna o painel lateral |
 | `options.html` | Página de configuração (URL do servidor e API Key) |
 | `options.js` | Lógica de salvar/carregar configurações via chrome.storage.sync |
 | `options.css` | Estilos da página de configuração |
@@ -204,6 +212,11 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 | `nome_lead` | VARCHAR(255) | Nome do lead (lido automaticamente do DOM) |
 | `email` | VARCHAR(255) | E-mail do lead |
 | `destino` | VARCHAR(255) | Destino da viagem |
+| `status_negocio` | VARCHAR(100) | Status comercial do negócio |
+| `temperatura_lead` | VARCHAR(100) | Temperatura do lead: Frio, Morno ou Quente |
+| `proximo_contato` | VARCHAR(100) | Próxima data de contato |
+| `valor_estimado` | VARCHAR(100) | Valor estimado do negócio |
+| `responsavel` | VARCHAR(255) | Responsável pelo acompanhamento |
 | `data_viagem` | VARCHAR(100) | Data ou estimativa (texto livre) |
 | `duracao_viagem` | VARCHAR(100) | Duração em dias/noites |
 | `numero_viajantes` | VARCHAR(100) | Quantidade de viajantes |
@@ -218,6 +231,8 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 | `updated_at` | TIMESTAMP | Última atualização (automático) |
 | *(campos extras)* | VARCHAR(255) | Campos personalizados criados pela aba ⚙️ Campos |
 
+Também há a tabela `lead_negocio_field_config`, usada para salvar no servidor a ordem, o rótulo, o tipo visual e as opções dos campos exibidos pela extensão.
+
 ---
 
 ## Como usar a extensão
@@ -226,17 +241,19 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 
 - Selecione um negócio existente no dropdown ou mantenha **Novo negócio**
 - O campo **Nome do Lead** é preenchido automaticamente da página
+- Use os campos de acompanhamento, como status, temperatura, próximo contato, valor estimado e responsável, para controlar melhor cada oportunidade
 - Preencha os campos e clique **Salvar**
 - Use **Excluir** para remover o negócio selecionado (pede confirmação)
 - Use **Limpar** para voltar ao modo de criação
 - Use **Recarregar** para buscar os dados atualizados do servidor
+- Ao trocar, limpar ou recarregar com alterações não salvas, a extensão avisa antes de descartar o formulário
 
 ### Aba ⚙️ Campos
 
 - Visualize os campos padrão (fixos) e os campos personalizados
-- **Adicionar campo:** informe um nome em snake_case (ex: `numero_voo`) e clique em Adicionar — uma nova coluna VARCHAR(255) é criada no banco
-- **Reordenar:** use as setas ↑ ↓ para alterar a ordem de exibição no formulário
-- **Renomear rótulo:** edite o nome exibido e clique ✓ — salvo localmente, sem alterar a coluna do banco
+- **Adicionar campo:** informe nome técnico, rótulo, tipo e opções quando for uma lista
+- **Reordenar:** use as setas ↑ ↓ para alterar a ordem de exibição no formulário para todos os usuários
+- **Renomear rótulo e tipo:** edite o nome exibido, o tipo visual e as opções e clique ✓ — salvo no servidor, sem renomear a coluna do banco
 - **Remover campo personalizado:** remove a coluna do banco permanentemente (com aviso de perda de dados)
 
 ---
@@ -244,9 +261,10 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 ## Segurança
 
 - As credenciais do banco (`DB_HOST`, `DB_USER`, `DB_PASS`) ficam **apenas no servidor** no arquivo `db.conf` — nunca são expostas na extensão ou no browser
-- A extensão armazena apenas a URL do servidor, API Key e Admin Key no `chrome.storage.sync`
+- A extensão armazena URL do servidor, API Key e Admin Key no `chrome.storage.sync`
+- Ordem, rótulos, tipos e opções dos campos ficam no banco do servidor em `lead_negocio_field_config`
 - **API Key** — usada por todos os usuários para operações normais (salvar, buscar, excluir negócios). Header: `X-Api-Key`
-- **Admin Key** — usada exclusivamente para gerenciamento de campos (add_field, remove_field, get_fields). Header: `X-Admin-Key`. Deve ser diferente da API Key e compartilhada apenas com administradores
+- **Admin Key** — usada exclusivamente para gerenciamento de campos (add_field, remove_field, get_fields, save_field_config). Header: `X-Admin-Key`. Deve ser diferente da API Key e compartilhada apenas com administradores
 - Usuários sem Admin Key configurada não veem a aba ⚙️ Campos no painel
 - As comparações de chaves usam `hash_equals()` para evitar ataques de timing
 - Nomes de colunas são sanitizados antes de qualquer `ALTER TABLE`

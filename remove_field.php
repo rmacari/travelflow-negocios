@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negocios — remove_field.php
+ * Travel Flow Negócios — remove_field.php
  * =============================================================================
  * Endpoint da API para remoção de um campo (coluna) da tabela lead_negocios.
  *
@@ -22,7 +22,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negocios
+ * Projeto: Travel Flow Negócios
  * =============================================================================
  */
 
@@ -39,12 +39,10 @@ validateAdminKey();
 // Estes campos não podem ser removidos pela API — fazem parte da estrutura
 // essencial do sistema. Qualquer tentativa de removê-los é rejeitada com 403.
 // ---------------------------------------------------------------------------
-$protectedFields = [
-    'nome_lead', 'email', 'destino', 'data_viagem', 'duracao_viagem',
-    'numero_viajantes', 'idade_viajantes', 'cidade_origem', 'orcamento',
-    'tipo_compra', 'prioridade_valor', 'quando_reservar', 'observacoes',
-    'id', 'conversation_id', 'created_at', 'updated_at'
-];
+$protectedFields = array_merge(
+    getDefaultFieldNames(),
+    ['id', 'conversation_id', 'created_at', 'updated_at']
+);
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY
@@ -117,15 +115,20 @@ try {
     // ---------------------------------------------------------------------------
     $db->exec("ALTER TABLE lead_negocios DROP COLUMN `{$fieldName}`");
 
+    $deleteConfig = $db->prepare(
+        'DELETE FROM lead_negocio_field_config WHERE field_name = :field_name'
+    );
+    $deleteConfig->execute(['field_name' => $fieldName]);
+
     echo json_encode([
         'success' => true,
         'message' => "Campo '{$fieldName}' removido com sucesso.",
-    ]);
+    ], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
     http_response_code(500);
     echo json_encode([
         'success' => false,
         'message' => 'Erro ao remover campo.',
         'error'   => $e->getMessage()
-    ]);
+    ], JSON_UNESCAPED_UNICODE);
 }

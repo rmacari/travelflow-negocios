@@ -1,12 +1,12 @@
 <!DOCTYPE html>
 <!--
   =============================================================================
-  Travel Flow Negocios — options.html
+  Travel Flow Negócios — options.html
   =============================================================================
   Página de configuração da extensão Chrome.
 
   Acessível via: botão direito no ícone da extensão → "Opções"
-  ou chrome://extensions → Travel Flow Negocios → Detalhes → Opções de extensão
+  ou chrome://extensions → Travel Flow Negócios → Detalhes → Opções de extensão
 
   Permite ao usuário configurar:
     - URL do servidor backend
@@ -18,14 +18,14 @@
 
   Autor:   Ricardo Macari
   Contato: macari@gmail.com
-  Projeto: Travel Flow Negocios
+  Projeto: Travel Flow Negócios
   =============================================================================
 -->
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Travel Flow Negocios — Configurações</title>
+  <title>Travel Flow Negócios — Configurações</title>
   <link rel="stylesheet" href="options.css" />
 </head>
 <body>
@@ -33,7 +33,7 @@
   <div class="opt-container">
 
     <header class="opt-header">
-      <h1 class="opt-title">⚙️ Travel Flow Negocios</h1>
+      <h1 class="opt-title">⚙️ Travel Flow Negócios</h1>
       <p class="opt-subtitle">Configure a conexão com o seu servidor backend</p>
     </header>
 
@@ -115,9 +115,9 @@
     <section class="opt-card opt-card-info">
       <h2 class="opt-section-title">Como instalar o backend</h2>
       <ol class="opt-steps">
-        <li>Baixe os arquivos PHP e o <code>schema.sql</code> em <a href="https://github.com/rmacari/travelflow-negocios" target="_blank">github.com/rmacari/travelflow-negocios</a></li>
+        <li>Baixe os arquivos PHP e o <code>schema.sql</code> em <a href="https://github.com/rmacari/travelflow-negocios" target="_blank" rel="noopener">github.com/rmacari/travelflow-negocios</a></li>
         <li>Envie todos os arquivos para uma pasta no seu servidor (ex: <code>/httpdocs/travelflow-negocios/</code>)</li>
-        <li>Importe o <code>schema.sql</code> no seu banco de dados MySQL</li>
+        <li>Importe o <code>schema.sql</code> no seu banco de dados MySQL. Em banco já existente, execute também as migrações necessárias, incluindo <code>migrate_v3.sql</code>.</li>
         <li>
           Crie o arquivo <code>db.conf</code> na mesma pasta:
           <pre class="opt-pre">DB_HOST=localhost

@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negocios — delete_negocio.php
+ * Travel Flow Negócios — delete_negocio.php
  * =============================================================================
  * Endpoint da API para exclusão de um negócio de um atendimento.
  *
@@ -15,7 +15,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negocios
+ * Projeto: Travel Flow Negócios
  * =============================================================================
  */
 

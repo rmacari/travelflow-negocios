@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negocios — db.php
+ * Travel Flow Negócios — db.php
  * =============================================================================
  * Módulo de conexão com o banco de dados MySQL e configuração de CORS.
  *
@@ -14,11 +14,12 @@
  *   - validateAdminKey():  valida a chave de administrador (ADMIN_KEY) —
  *                          gerenciamento de campos (add_field, remove_field, get_fields)
  *   - getLeadNegocioFields(): lista os campos editáveis da tabela lead_negocios
+ *   - getFieldDefinitions(): lista campos com rótulo, tipo, opções e ordem
  *   - sanitizeColumnName(): sanitiza nomes de coluna para ALTER TABLE seguro
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negocios
+ * Projeto: Travel Flow Negócios
  * =============================================================================
  */
 
@@ -174,6 +175,240 @@ function validateAdminKey()
         echo json_encode(['success' => false, 'message' => 'Acesso negado. Chave de administrador inválida ou ausente.']);
         exit;
     }
+}
+
+function getDefaultFieldMeta()
+{
+    return [
+        'nome_lead'        => ['label' => 'Nome do Lead', 'type' => 'text', 'auto' => true],
+        'email'            => ['label' => 'Email', 'type' => 'text'],
+        'destino'          => ['label' => 'Destino', 'type' => 'text'],
+        'status_negocio'   => [
+            'label'   => 'Status do Negócio',
+            'type'    => 'select',
+            'options' => ['', 'Novo', 'Em atendimento', 'Cotação enviada', 'Aguardando retorno', 'Fechado', 'Perdido'],
+        ],
+        'temperatura_lead' => [
+            'label'   => 'Temperatura do Lead',
+            'type'    => 'select',
+            'options' => ['', 'Frio', 'Morno', 'Quente'],
+        ],
+        'proximo_contato'  => ['label' => 'Próximo Contato', 'type' => 'date'],
+        'valor_estimado'   => ['label' => 'Valor Estimado', 'type' => 'currency'],
+        'responsavel'      => ['label' => 'Responsável', 'type' => 'text'],
+        'data_viagem'      => ['label' => 'Data da Viagem', 'type' => 'text'],
+        'duracao_viagem'   => ['label' => 'Duração da Viagem', 'type' => 'text'],
+        'numero_viajantes' => ['label' => 'Nº de Viajantes', 'type' => 'number'],
+        'idade_viajantes'  => ['label' => 'Idade dos Viajantes', 'type' => 'text'],
+        'cidade_origem'    => ['label' => 'Cidade de Origem', 'type' => 'text'],
+        'orcamento'        => ['label' => 'Orçamento', 'type' => 'currency'],
+        'tipo_compra'      => [
+            'label'   => 'Tipo de Compra',
+            'type'    => 'select',
+            'options' => ['', 'Pacote completo', 'Aéreo + Hotel', 'Só hotel', 'Só aéreo', 'Cruzeiro', 'Seguro', 'Outro'],
+        ],
+        'prioridade_valor' => [
+            'label'   => 'Prioridade de Valor',
+            'type'    => 'select',
+            'options' => ['', 'Preço', 'Custo-Benefício', 'Conforto', 'Experiências', 'Luxo'],
+        ],
+        'quando_reservar'  => [
+            'label'   => 'Quando Pretende Reservar',
+            'type'    => 'select',
+            'options' => ['', 'Hoje', 'Esta semana', 'Este mês', 'Em 30 dias', 'Só pesquisando'],
+        ],
+        'observacoes'      => ['label' => 'Observações', 'type' => 'textarea'],
+    ];
+}
+
+function getDefaultFieldNames()
+{
+    return array_keys(getDefaultFieldMeta());
+}
+
+function normalizeFieldType($type)
+{
+    $type = strtolower(trim((string) $type));
+    $allowed = ['text', 'textarea', 'select', 'date', 'number', 'currency'];
+
+    return in_array($type, $allowed, true) ? $type : 'text';
+}
+
+function normalizeFieldOptions($options)
+{
+    if (is_string($options)) {
+        $decoded = json_decode($options, true);
+        if (is_array($decoded)) {
+            $options = $decoded;
+        } else {
+            $options = preg_split('/\r\n|\r|\n/', $options);
+        }
+    }
+
+    if (!is_array($options)) {
+        return [];
+    }
+
+    $normalized = [];
+    foreach ($options as $option) {
+        $value = trim((string) $option);
+        if ($value === '' && in_array('', $normalized, true)) {
+            continue;
+        }
+        if ($value !== '' && in_array($value, $normalized, true)) {
+            continue;
+        }
+        $normalized[] = $value;
+    }
+
+    return $normalized;
+}
+
+function encodeFieldOptions($options)
+{
+    return json_encode(normalizeFieldOptions($options), JSON_UNESCAPED_UNICODE);
+}
+
+function decodeFieldOptions($options)
+{
+    $decoded = json_decode((string) $options, true);
+    return normalizeFieldOptions(is_array($decoded) ? $decoded : []);
+}
+
+function getColumnSqlForFieldType($type)
+{
+    return normalizeFieldType($type) === 'textarea'
+        ? 'TEXT NULL'
+        : "VARCHAR(255) NOT NULL DEFAULT ''";
+}
+
+function ensureFieldConfigTable()
+{
+    getDb()->exec("
+        CREATE TABLE IF NOT EXISTS lead_negocio_field_config (
+            field_name VARCHAR(64) NOT NULL,
+            field_label VARCHAR(255) NOT NULL DEFAULT '',
+            field_type VARCHAR(20) NOT NULL DEFAULT 'text',
+            field_options TEXT NULL,
+            display_order INT UNSIGNED NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (field_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+}
+
+function getLeadNegocioColumnMeta()
+{
+    $config = loadConfig(__DIR__ . '/db.conf');
+    $dbName = $config['DB_NAME'] ?? '';
+
+    $stmt = getDb()->prepare("
+        SELECT COLUMN_NAME, DATA_TYPE, ORDINAL_POSITION
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = :db_name
+          AND TABLE_NAME   = 'lead_negocios'
+        ORDER BY ORDINAL_POSITION ASC
+    ");
+    $stmt->execute(['db_name' => $dbName]);
+
+    return $stmt->fetchAll();
+}
+
+function getGeneratedFieldLabel($fieldName)
+{
+    return ucwords(str_replace('_', ' ', $fieldName));
+}
+
+function ensureFieldConfigRows($columns)
+{
+    ensureFieldConfigTable();
+
+    $db = getDb();
+    $defaultMeta = getDefaultFieldMeta();
+    $insert = $db->prepare("
+        INSERT INTO lead_negocio_field_config
+            (field_name, field_label, field_type, field_options, display_order)
+        VALUES
+            (:field_name, :field_label, :field_type, :field_options, :display_order)
+        ON DUPLICATE KEY UPDATE field_name = field_name
+    ");
+
+    foreach ($columns as $column) {
+        $name = $column['COLUMN_NAME'];
+        if (!preg_match('/^[a-z][a-z0-9_]{1,63}$/', $name) || $name === 'conversation_id') {
+            continue;
+        }
+
+        $meta = $defaultMeta[$name] ?? [];
+        $type = normalizeFieldType($meta['type'] ?? ($column['DATA_TYPE'] === 'text' ? 'textarea' : 'text'));
+
+        $insert->execute([
+            'field_name'    => $name,
+            'field_label'   => $meta['label'] ?? getGeneratedFieldLabel($name),
+            'field_type'    => $type,
+            'field_options' => encodeFieldOptions($meta['options'] ?? []),
+            'display_order' => max(0, (int) $column['ORDINAL_POSITION']),
+        ]);
+    }
+}
+
+function getFieldDefinitions()
+{
+    $columns = getLeadNegocioColumnMeta();
+    ensureFieldConfigRows($columns);
+
+    $systemColumns = ['id', 'conversation_id', 'created_at', 'updated_at'];
+    $defaultMeta = getDefaultFieldMeta();
+    $columnByName = [];
+
+    foreach ($columns as $column) {
+        $columnByName[$column['COLUMN_NAME']] = $column;
+    }
+
+    $stmt = getDb()->query("
+        SELECT field_name, field_label, field_type, field_options, display_order
+        FROM lead_negocio_field_config
+        ORDER BY display_order ASC, field_name ASC
+    ");
+
+    $fields = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $name = $row['field_name'];
+        if (!isset($columnByName[$name]) || in_array($name, $systemColumns, true)) {
+            continue;
+        }
+        if (!preg_match('/^[a-z][a-z0-9_]{1,63}$/', $name)) {
+            continue;
+        }
+
+        $type = normalizeFieldType($row['field_type']);
+        $options = decodeFieldOptions($row['field_options'] ?? '[]');
+
+        if ($type === 'select' && !in_array('', $options, true)) {
+            array_unshift($options, '');
+        }
+
+        $isDefault = array_key_exists($name, $defaultMeta);
+        $definition = [
+            'name'          => $name,
+            'key'           => $name,
+            'label'         => $row['field_label'] ?: ($defaultMeta[$name]['label'] ?? getGeneratedFieldLabel($name)),
+            'type'          => $type,
+            'options'       => $type === 'select' ? $options : [],
+            'is_default'    => $isDefault,
+            'removable'     => !$isDefault,
+            'column_type'   => $columnByName[$name]['DATA_TYPE'],
+            'display_order' => (int) $row['display_order'],
+        ];
+
+        if (!empty($defaultMeta[$name]['auto'])) {
+            $definition['auto'] = true;
+        }
+
+        $fields[] = $definition;
+    }
+
+    return $fields;
 }
 
 /**
