@@ -253,6 +253,13 @@
     autoFillLeadName();
   }
 
+  async function refreshFormFieldsPreservingData() {
+    const currentData = getFormData();
+    await loadFormFields();
+    renderFormFields();
+    fillForm(currentData);
+  }
+
   // ✅ CORRIGIDO: getElementById com template literal correta
   function clearForm() {
     fields.forEach(field => {
@@ -637,9 +644,13 @@
   }
 
   function saveFieldConfig(order, labels) {
-    try {
-      chrome.storage.local.set({ tfq_field_order: order, tfq_field_labels: labels });
-    } catch (e) { /* storage indisponível */ }
+    return new Promise(resolve => {
+      try {
+        chrome.storage.local.set({ tfq_field_order: order, tfq_field_labels: labels }, resolve);
+      } catch (e) {
+        resolve();
+      }
+    });
   }
 
   async function renderFieldsList(fieldsList) {
@@ -689,6 +700,7 @@
         [reordered[idx - 1], reordered[idx]] = [reordered[idx], reordered[idx - 1]];
         await persistFieldOrder(reordered);
         renderFieldsList(reordered);
+        await refreshFormFieldsPreservingData();
       });
     });
 
@@ -700,6 +712,7 @@
         [reordered[idx], reordered[idx + 1]] = [reordered[idx + 1], reordered[idx]];
         await persistFieldOrder(reordered);
         renderFieldsList(reordered);
+        await refreshFormFieldsPreservingData();
       });
     });
 
