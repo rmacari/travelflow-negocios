@@ -30,7 +30,7 @@ ALTER TABLE lead_negocios
 
 -- Adiciona o campo observações (texto longo)
 ALTER TABLE lead_negocios
-  ADD COLUMN observacoes TEXT NOT NULL DEFAULT '' AFTER quando_reservar;
+  ADD COLUMN observacoes TEXT NULL AFTER quando_reservar;
 
 -- Remove o campo nome_negocio que foi substituído por nome_lead
 -- ATENÇÃO: execute esta linha somente após confirmar que não há dados

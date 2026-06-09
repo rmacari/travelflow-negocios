@@ -25,6 +25,9 @@ require __DIR__ . '/db.php';
 // Envia headers CORS e responde imediatamente a requisições OPTIONS (preflight)
 sendCors();
 
+// Valida a chave de API para operações normais
+validateApiKey();
+
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY
 // O body deve ser um JSON válido; caso contrário a requisição é rejeitada.
@@ -52,23 +55,15 @@ if ($conversationId === '') {
     exit;
 }
 
-// Payload com todos os campos editáveis do negócio
-$payload = [
-    'conversation_id'  => $conversationId,
-    'nome_lead'        => trim($data['nome_lead']        ?? ''),
-    'email'            => trim($data['email']            ?? ''),
-    'destino'          => trim($data['destino']          ?? ''),
-    'data_viagem'      => trim($data['data_viagem']      ?? ''),
-    'duracao_viagem'   => trim($data['duracao_viagem']   ?? ''),
-    'numero_viajantes' => trim($data['numero_viajantes'] ?? ''),
-    'idade_viajantes'  => trim($data['idade_viajantes']  ?? ''),
-    'cidade_origem'    => trim($data['cidade_origem']    ?? ''),
-    'orcamento'        => trim($data['orcamento']        ?? ''),
-    'tipo_compra'      => trim($data['tipo_compra']      ?? ''),
-    'prioridade_valor' => trim($data['prioridade_valor'] ?? ''),
-    'quando_reservar'  => trim($data['quando_reservar']  ?? ''),
-    'observacoes'      => trim($data['observacoes']      ?? ''),
-];
+// Payload com todos os campos editáveis existentes no banco, incluindo campos personalizados
+$editableFields = getLeadNegocioFields();
+$payload = [];
+
+foreach ($editableFields as $field) {
+    $payload[$field] = $field === 'conversation_id'
+        ? $conversationId
+        : trim($data[$field] ?? '');
+}
 
 // nome_lead é o único campo obrigatório
 if ($payload['nome_lead'] === '') {
@@ -100,21 +95,11 @@ try {
             exit;
         }
 
-        $sql = "UPDATE lead_negocios SET
-            nome_lead        = :nome_lead,
-            email            = :email,
-            destino          = :destino,
-            data_viagem      = :data_viagem,
-            duracao_viagem   = :duracao_viagem,
-            numero_viajantes = :numero_viajantes,
-            idade_viajantes  = :idade_viajantes,
-            cidade_origem    = :cidade_origem,
-            orcamento        = :orcamento,
-            tipo_compra      = :tipo_compra,
-            prioridade_valor = :prioridade_valor,
-            quando_reservar  = :quando_reservar,
-            observacoes      = :observacoes
-        WHERE id = :id AND conversation_id = :conversation_id";
+        $updateFields = array_values(array_filter($editableFields, fn($field) => $field !== 'conversation_id'));
+        $assignments  = array_map(fn($field) => "`{$field}` = :{$field}", $updateFields);
+        $sql = "UPDATE lead_negocios SET "
+             . implode(', ', $assignments)
+             . " WHERE id = :id AND conversation_id = :conversation_id";
 
         $stmt = $db->prepare($sql);
         $stmt->execute($payload + ['id' => $id]);
@@ -133,15 +118,13 @@ try {
     // Retorna o ID gerado pelo AUTO_INCREMENT para que o frontend possa
     // selecionar o item recém-criado no dropdown.
     // ---------------------------------------------------------------------------
-    $sql = "INSERT INTO lead_negocios (
-        conversation_id, nome_lead, email, destino, data_viagem, duracao_viagem,
-        numero_viajantes, idade_viajantes, cidade_origem, orcamento, tipo_compra,
-        prioridade_valor, quando_reservar, observacoes
-    ) VALUES (
-        :conversation_id, :nome_lead, :email, :destino, :data_viagem, :duracao_viagem,
-        :numero_viajantes, :idade_viajantes, :cidade_origem, :orcamento, :tipo_compra,
-        :prioridade_valor, :quando_reservar, :observacoes
-    )";
+    $columns      = array_map(fn($field) => "`{$field}`", $editableFields);
+    $placeholders = array_map(fn($field) => ":{$field}", $editableFields);
+    $sql = "INSERT INTO lead_negocios ("
+         . implode(', ', $columns)
+         . ") VALUES ("
+         . implode(', ', $placeholders)
+         . ")";
 
     $stmt = $db->prepare($sql);
     $stmt->execute($payload);

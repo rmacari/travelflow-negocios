@@ -7,7 +7,7 @@
  *
  * Executa um ALTER TABLE ... DROP COLUMN no banco MySQL.
  * Protegido por duas camadas:
- *   1. Chave secreta via header X-Api-Key
+ *   1. Chave secreta via header X-Admin-Key
  *   2. Bloqueio de campos padrão — apenas colunas personalizadas podem
  *      ser removidas; os campos fixos do sistema são intocáveis.
  *

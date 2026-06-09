@@ -110,18 +110,19 @@ Cole o resultado gerado no campo `API_KEY` do `db.conf`.
 
 #### 5. Teste os endpoints
 
-Acesse no browser para confirmar que o backend responde:
+Use cURL para confirmar que o backend responde com a API Key:
 
-```
-https://seudominio.com/travelflow-negocios/get_negocios.php?conversation_id=teste
+```bash
+curl -H "X-Api-Key: sua_api_key" \
+  "https://seudominio.com/travelflow-negocios/get_negocios.php?conversation_id=teste"
 ```
 
 Deve retornar: `{"success":true,"data":[]}`
 
-Para testar os endpoints de gerenciamento de campos, use Postman ou cURL com o header `X-Api-Key`:
+Para testar os endpoints de gerenciamento de campos, use Postman ou cURL com o header `X-Admin-Key`:
 
 ```bash
-curl -H "X-Api-Key: sua_chave" \
+curl -H "X-Admin-Key: sua_admin_key" \
   https://seudominio.com/travelflow-negocios/get_fields.php
 ```
 
@@ -173,11 +174,12 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 | `db.conf.example` | Modelo do arquivo de configuração |
 | `db.php` | Conexão PDO, CORS, validação de API Key e sanitização de colunas |
 | `get_negocios.php` | Lista todos os negócios de um `conversation_id` |
+| `get_form_fields.php` | Lista campos do formulário *(requer X-Api-Key)* |
 | `save_negocio.php` | Cria ou atualiza um negócio |
 | `delete_negocio.php` | Exclui um negócio por ID |
-| `get_fields.php` | Lista as colunas atuais da tabela *(requer X-Api-Key)* |
-| `add_field.php` | Adiciona nova coluna à tabela *(requer X-Api-Key)* |
-| `remove_field.php` | Remove coluna personalizada da tabela *(requer X-Api-Key)* |
+| `get_fields.php` | Lista as colunas atuais da tabela *(requer X-Admin-Key)* |
+| `add_field.php` | Adiciona nova coluna à tabela *(requer X-Admin-Key)* |
+| `remove_field.php` | Remove coluna personalizada da tabela *(requer X-Admin-Key)* |
 
 ### Extensão Chrome
 

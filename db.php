@@ -13,6 +13,7 @@
  *   - validateApiKey():    valida a chave de usuário (API_KEY) — operações normais
  *   - validateAdminKey():  valida a chave de administrador (ADMIN_KEY) —
  *                          gerenciamento de campos (add_field, remove_field, get_fields)
+ *   - getLeadNegocioFields(): lista os campos editáveis da tabela lead_negocios
  *   - sanitizeColumnName(): sanitiza nomes de coluna para ALTER TABLE seguro
  *
  * Autor:   Ricardo Macari
@@ -173,6 +174,42 @@ function validateAdminKey()
         echo json_encode(['success' => false, 'message' => 'Acesso negado. Chave de administrador inválida ou ausente.']);
         exit;
     }
+}
+
+/**
+ * Retorna os campos editáveis da tabela lead_negocios, preservando a ordem real
+ * das colunas no banco e excluindo colunas internas de controle.
+ *
+ * @return array Lista de colunas editáveis.
+ */
+function getLeadNegocioFields()
+{
+    $config = loadConfig(__DIR__ . '/db.conf');
+    $dbName = $config['DB_NAME'] ?? '';
+
+    $stmt = getDb()->prepare("
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = :db_name
+          AND TABLE_NAME   = 'lead_negocios'
+        ORDER BY ORDINAL_POSITION ASC
+    ");
+    $stmt->execute(['db_name' => $dbName]);
+
+    $systemColumns = ['id', 'created_at', 'updated_at'];
+    $fields = [];
+
+    foreach ($stmt->fetchAll() as $column) {
+        $name = $column['COLUMN_NAME'];
+        if (in_array($name, $systemColumns, true)) {
+            continue;
+        }
+        if (preg_match('/^[a-z][a-z0-9_]{1,63}$/', $name)) {
+            $fields[] = $name;
+        }
+    }
+
+    return $fields;
 }
 
 /**

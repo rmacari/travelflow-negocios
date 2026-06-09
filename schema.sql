@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS lead_negocios (
     quando_reservar VARCHAR(100) NOT NULL DEFAULT '',
 
     -- Observações livres sobre o negócio ou o lead (texto longo)
-    observacoes TEXT NOT NULL DEFAULT '',
+    observacoes TEXT NULL,
 
     -- -------------------------------------------------------------------------
     -- CONTROLE DE DATAS

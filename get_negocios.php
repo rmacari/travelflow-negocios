@@ -23,6 +23,9 @@ require __DIR__ . '/db.php';
 // Envia headers CORS e responde imediatamente a requisições OPTIONS (preflight)
 sendCors();
 
+// Valida a chave de API para operações normais
+validateApiKey();
+
 // ---------------------------------------------------------------------------
 // VALIDAÇÃO DE ENTRADA
 // Rejeita a requisição se o conversation_id não for fornecido.
@@ -42,24 +45,7 @@ if ($conversationId === '') {
 // ---------------------------------------------------------------------------
 try {
     $stmt = getDb()->prepare("
-        SELECT
-            id,
-            conversation_id,
-            nome_lead,
-            email,
-            destino,
-            data_viagem,
-            duracao_viagem,
-            numero_viajantes,
-            idade_viajantes,
-            cidade_origem,
-            orcamento,
-            tipo_compra,
-            prioridade_valor,
-            quando_reservar,
-            observacoes,
-            created_at,
-            updated_at
+        SELECT *
         FROM lead_negocios
         WHERE conversation_id = :conversation_id
         ORDER BY id DESC

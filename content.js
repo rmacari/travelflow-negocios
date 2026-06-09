@@ -77,7 +77,15 @@
     return ADMIN_KEY !== '';
   }
 
-  const fields = [
+  function apiHeaders(extra = {}) {
+    return { 'X-Api-Key': API_KEY, ...extra };
+  }
+
+  function adminHeaders(extra = {}) {
+    return { 'X-Admin-Key': ADMIN_KEY, ...extra };
+  }
+
+  const defaultFields = [
     { key: 'nome_lead',        label: 'Nome do Lead',               type: 'text',     auto: true },
     { key: 'email',            label: 'Email',                      type: 'text' },
     { key: 'destino',          label: 'Destino',                    type: 'text' },
@@ -107,6 +115,8 @@
     },
     { key: 'observacoes', label: 'Observações', type: 'textarea' }
   ];
+
+  let fields = [...defaultFields];
 
   let currentConversationId     = '';
   let panelInitialized          = false;
@@ -192,6 +202,54 @@
         <input class="tfq-input" id="tfq-${field.key}" type="text" />
       </div>
     `;
+  }
+
+  async function loadFormFields() {
+    if (!isConfigured()) {
+      fields = [...defaultFields];
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/get_form_fields.php`, {
+        headers: apiHeaders()
+      });
+      const result = await response.json();
+
+      if (!result.success || !Array.isArray(result.fields) || result.fields.length === 0) {
+        throw new Error(result.message || 'Erro ao buscar campos do formulário.');
+      }
+
+      const savedOrder  = await getSavedFieldOrder();
+      const savedLabels = await getSavedFieldLabels();
+      const incoming    = result.fields.map(field => ({
+        ...field,
+        label: savedLabels[field.key] || field.label || field.key
+      }));
+
+      if (savedOrder.length > 0) {
+        const ordered = [];
+        savedOrder.forEach(name => {
+          const field = incoming.find(item => item.key === name);
+          if (field) ordered.push(field);
+        });
+        incoming.forEach(field => {
+          if (!ordered.find(item => item.key === field.key)) ordered.push(field);
+        });
+        fields = ordered;
+      } else {
+        fields = incoming;
+      }
+    } catch (error) {
+      fields = [...defaultFields];
+    }
+  }
+
+  function renderFormFields() {
+    const grid = document.querySelector(`#${PANEL_ID} .tfq-grid`);
+    if (!grid) return;
+    grid.innerHTML = fields.map(createField).join('');
+    autoFillLeadName();
   }
 
   // ✅ CORRIGIDO: getElementById com template literal correta
@@ -366,7 +424,8 @@
 
     try {
       const response = await fetch(
-        `${API_BASE}/get_negocios.php?conversation_id=${encodeURIComponent(conversationId)}&_t=${Date.now()}`
+        `${API_BASE}/get_negocios.php?conversation_id=${encodeURIComponent(conversationId)}&_t=${Date.now()}`,
+        { headers: apiHeaders() }
       );
       const result = await response.json();
 
@@ -431,7 +490,7 @@
 
       const response = await fetch(`${API_BASE}/save_negocio.php`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders({ 'Content-Type': 'application/json' }),
         body:    JSON.stringify(payload)
       });
       const result = await response.json();
@@ -481,7 +540,7 @@
 
       const response = await fetch(`${API_BASE}/delete_negocio.php`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders({ 'Content-Type': 'application/json' }),
         body:    JSON.stringify({ id: editingId, conversation_id: conversationId })
       });
       const result = await response.json();
@@ -510,7 +569,6 @@
     if (panel)  panel.remove();
     if (toggle) toggle.remove();
 
-    stopVisibilityCheck();
     panelInitialized      = false;
     currentConversationId = '';
     negociosCache         = [];
@@ -523,7 +581,7 @@
 
     try {
       const response = await fetch(`${API_BASE}/get_fields.php`, {
-        headers: { 'X-Admin-Key': ADMIN_KEY }
+        headers: adminHeaders()
       });
       const result = await response.json();
       if (!result.success) throw new Error(result.message || 'Erro ao buscar campos.');
@@ -670,7 +728,7 @@
         try {
           const response = await fetch(`${API_BASE}/remove_field.php`, {
             method:  'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Admin-Key': ADMIN_KEY },
+            headers: adminHeaders({ 'Content-Type': 'application/json' }),
             body:    JSON.stringify({ field_name: name })
           });
           const result = await response.json();
@@ -682,6 +740,8 @@
           saveFieldConfig(newOrder, labels);
 
           if (statusEl) { statusEl.textContent = result.message; statusEl.className = 'success'; }
+          await loadFormFields();
+          renderFormFields();
           await loadFields();
 
         } catch (error) {
@@ -714,7 +774,7 @@
 
       const response = await fetch(`${API_BASE}/add_field.php`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Admin-Key': ADMIN_KEY },
+        headers: adminHeaders({ 'Content-Type': 'application/json' }),
         body:    JSON.stringify({ field_name: fieldName })
       });
       const result = await response.json();
@@ -722,6 +782,8 @@
 
       if (input) input.value = '';
       if (statusEl) { statusEl.textContent = result.message; statusEl.className = 'success'; }
+      await loadFormFields();
+      renderFormFields();
       await loadFields();
 
     } catch (error) {
@@ -858,6 +920,8 @@
         }
       }
 
+      await loadFormFields();
+      renderFormFields();
       loadNegocios(true);
     }
 

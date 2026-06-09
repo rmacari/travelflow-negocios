@@ -24,6 +24,9 @@ require __DIR__ . '/db.php';
 // Envia headers CORS e responde imediatamente a requisições OPTIONS (preflight)
 sendCors();
 
+// Valida a chave de API para operações normais
+validateApiKey();
+
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY
 // O body deve ser um JSON válido; caso contrário a requisição é rejeitada.
