@@ -25,6 +25,8 @@ require __DIR__ . '/db.php';
 
 // Envia headers CORS e responde imediatamente a requisições OPTIONS (preflight)
 sendCors();
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
 
 // Valida a chave secreta antes de qualquer operação
 validateAdminKey();

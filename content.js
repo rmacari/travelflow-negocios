@@ -211,7 +211,8 @@
     }
 
     try {
-      const response = await fetch(`${API_BASE}/get_form_fields.php`, {
+      const response = await fetch(`${API_BASE}/get_form_fields.php?_t=${Date.now()}`, {
+        cache:   'no-store',
         headers: apiHeaders()
       });
       const result = await response.json();
@@ -580,7 +581,8 @@
     if (statusEl) { statusEl.textContent = 'Carregando campos...'; statusEl.className = ''; }
 
     try {
-      const response = await fetch(`${API_BASE}/get_fields.php`, {
+      const response = await fetch(`${API_BASE}/get_fields.php?_t=${Date.now()}`, {
+        cache:   'no-store',
         headers: adminHeaders()
       });
       const result = await response.json();
