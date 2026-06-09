@@ -10,7 +10,7 @@
  * para prevenir SQL injection. Verifica se a coluna já existe antes de criar.
  *
  * Método:  POST
- * Header:  X-Api-Key (obrigatório)
+ * Header:  X-Admin-Key (obrigatório — somente administradores)
  * Body:    JSON { field_name: string }
  *            field_name — nome da coluna (apenas letras minúsculas,
  *                         números e underscores, mínimo 2 caracteres)
@@ -29,7 +29,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Valida a chave secreta antes de qualquer operação
-validateApiKey();
+validateAdminKey();
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY
