@@ -9,7 +9,7 @@
  * usando o conversationId presente na URL como chave de vínculo.
  *
  * O campo Nome do Lead é preenchido automaticamente a partir do elemento
- * h3.font-semibold presente no DOM da página de atendimento.
+ * h3.font-semibold:not(.truncate) presente no DOM da página de atendimento.
  *
  * API_BASE e API_KEY são carregados do chrome.storage.sync, configurados
  * pelo usuário na página de Opções da extensão. Se não configurados,
@@ -43,7 +43,7 @@
 
   const PANEL_ID           = 'tfq-panel';
   const TOGGLE_ID          = 'tfq-toggle';
-  const LEAD_NAME_SELECTOR = 'h3.font-semibold';
+  const LEAD_NAME_SELECTOR = 'h3.font-semibold:not(.truncate)';
 
   let API_BASE  = '';
   let API_KEY   = '';
@@ -262,7 +262,7 @@
    * Atualiza o título h2 do painel com o nome do lead lido do DOM.
    *
    * O Travel Flow é um SPA e pode demorar alguns ms para atualizar o elemento
-   * h3.font-semibold após a troca de conversa. Por isso, tenta ler o nome
+   * h3.font-semibold:not(.truncate) após a troca de conversa. Por isso, tenta ler o nome
    * em até 5 tentativas com intervalos crescentes (100ms, 300ms, 600ms, 1000ms, 1500ms)
    * antes de desistir e exibir o texto genérico.
    *
@@ -1017,10 +1017,6 @@
     scheduleSync(true);
     // Atualiza o título imediatamente com o nome capturado pelo bridge,
     // antes mesmo do loadNegocios terminar
- *
- * Novidades (v0.4.5):
- *   - Ao trocar de conversa, o último negócio salvo é selecionado
- *     automaticamente no dropdown e o formulário é preenchido em modo edição
     if (leadName) updatePanelTitle(leadName);
   });
 

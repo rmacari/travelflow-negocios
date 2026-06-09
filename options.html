@@ -8,8 +8,11 @@
   Acessível via: botão direito no ícone da extensão → "Opções"
   ou chrome://extensions → Travel Flow Negocios → Detalhes → Opções de extensão
 
-  Permite ao usuário configurar a URL do servidor backend e a chave secreta
-  de API sem precisar editar nenhum arquivo da extensão manualmente.
+  Permite ao usuário configurar:
+    - URL do servidor backend
+    - API Key (todos os usuários)
+    - Admin Key (apenas administradores — habilita a aba ⚙️ Campos)
+
   As configurações são salvas via chrome.storage.sync e ficam disponíveis
   em todos os dispositivos onde o usuário estiver logado no Chrome.
 
@@ -36,7 +39,7 @@
 
     <!-- -----------------------------------------------------------------------
          SEÇÃO: CONEXÃO COM O SERVIDOR
-         URL do servidor e chave secreta de API
+         URL do servidor e chave de API para todos os usuários
          ----------------------------------------------------------------------- -->
     <section class="opt-card">
       <h2 class="opt-section-title">Conexão com o servidor</h2>
@@ -52,13 +55,13 @@
           spellcheck="false"
         />
         <p class="opt-hint">
-          Endereço completo da pasta onde os arquivos PHP do backend estão instalados no seu servidor.
+          Endereço completo da pasta onde os arquivos PHP do backend estão instalados.
           Não inclua barra no final.
         </p>
       </div>
 
       <div class="opt-row">
-        <label class="opt-label" for="api-key">Chave secreta (API Key)</label>
+        <label class="opt-label" for="api-key">Chave de API</label>
         <div class="opt-input-group">
           <input
             class="opt-input"
@@ -68,39 +71,68 @@
             autocomplete="off"
             spellcheck="false"
           />
-          <button class="opt-toggle-visibility" id="toggle-key-visibility" type="button" title="Mostrar/ocultar chave">👁</button>
+          <button class="opt-toggle-visibility" id="toggle-api-key" type="button" title="Mostrar/ocultar chave">👁</button>
         </div>
         <p class="opt-hint">
-          Mesma chave definida na variável <code>API_KEY</code> do arquivo <code>db.conf</code> no servidor.
-          Usada para autenticar as operações de gerenciamento de campos.
+          Chave definida em <code>API_KEY</code> no <code>db.conf</code> do servidor.
+          Necessária para todos os usuários.
+        </p>
+      </div>
+    </section>
+
+    <!-- -----------------------------------------------------------------------
+         SEÇÃO: ACESSO DE ADMINISTRADOR
+         Admin Key — habilita a aba ⚙️ Campos no painel
+         ----------------------------------------------------------------------- -->
+    <section class="opt-card">
+      <h2 class="opt-section-title">Acesso de administrador <span class="opt-badge">opcional</span></h2>
+
+      <div class="opt-row">
+        <label class="opt-label" for="admin-key">Chave de administrador (Admin Key)</label>
+        <div class="opt-input-group">
+          <input
+            class="opt-input"
+            id="admin-key"
+            type="password"
+            placeholder="Deixe em branco se não for administrador"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="opt-toggle-visibility" id="toggle-admin-key" type="button" title="Mostrar/ocultar chave">👁</button>
+        </div>
+        <p class="opt-hint">
+          Chave definida em <code>ADMIN_KEY</code> no <code>db.conf</code> do servidor.
+          Quando preenchida, habilita a aba <strong>⚙️ Campos</strong> no painel lateral,
+          permitindo adicionar, reordenar e remover campos do formulário.
+          Deixe em branco para usuários comuns.
         </p>
       </div>
     </section>
 
     <!-- -----------------------------------------------------------------------
          SEÇÃO: COMO INSTALAR O BACKEND
-         Instruções resumidas para o usuário configurar o servidor
          ----------------------------------------------------------------------- -->
     <section class="opt-card opt-card-info">
       <h2 class="opt-section-title">Como instalar o backend</h2>
       <ol class="opt-steps">
-        <li>Baixe os arquivos PHP e o <code>schema.sql</code> em <a href="https://github.com/macari/travelflow-negocios" target="_blank">github.com/macari/travelflow-negocios</a></li>
+        <li>Baixe os arquivos PHP e o <code>schema.sql</code> em <a href="https://github.com/rmacari/travelflow-negocios" target="_blank">github.com/rmacari/travelflow-negocios</a></li>
         <li>Envie todos os arquivos para uma pasta no seu servidor (ex: <code>/httpdocs/travelflow-negocios/</code>)</li>
         <li>Importe o <code>schema.sql</code> no seu banco de dados MySQL</li>
         <li>
-          Crie o arquivo <code>db.conf</code> na mesma pasta com o conteúdo:
+          Crie o arquivo <code>db.conf</code> na mesma pasta:
           <pre class="opt-pre">DB_HOST=localhost
 DB_NAME=seu_banco
 DB_USER=seu_usuario
 DB_PASS=sua_senha
 ALLOWED_ORIGIN=https://travelflow.tur.br
-API_KEY=sua_chave_secreta</pre>
+API_KEY=chave_para_todos_os_usuarios
+ADMIN_KEY=chave_somente_para_administradores</pre>
         </li>
         <li>
-          Gere uma chave secreta segura com o comando:<br/>
+          Gere chaves seguras e diferentes para <code>API_KEY</code> e <code>ADMIN_KEY</code>:<br/>
           <code>openssl rand -hex 32</code>
         </li>
-        <li>Cole a URL do servidor e a API Key nos campos acima e clique em <strong>Salvar configurações</strong></li>
+        <li>Preencha os campos acima e clique em <strong>Salvar configurações</strong></li>
       </ol>
     </section>
 
@@ -108,7 +140,7 @@ API_KEY=sua_chave_secreta</pre>
          BOTÕES E MENSAGEM DE STATUS
          ----------------------------------------------------------------------- -->
     <div class="opt-actions">
-      <button class="opt-btn opt-btn-primary" id="btn-save" type="button">Salvar configurações</button>
+      <button class="opt-btn opt-btn-primary"   id="btn-save" type="button">Salvar configurações</button>
       <button class="opt-btn opt-btn-secondary" id="btn-test" type="button">Testar conexão</button>
     </div>
 

@@ -38,7 +38,8 @@ Ou acesse: `chrome://extensions` → Travel Flow Negocios → **Detalhes** → *
 Na página de Opções, preencha:
 
 - **URL do servidor** — endereço completo da pasta do backend no servidor, ex: `https://seudominio.com/travelflow-negocios`
-- **API Key** — chave secreta fornecida pelo administrador do servidor
+- **API Key** — chave fornecida pelo administrador do servidor
+- **Admin Key** — *(opcional)* chave de administrador, fornecida apenas para quem pode gerenciar campos
 
 Clique em **Salvar configurações** e depois em **Testar conexão** para confirmar que tudo está funcionando.
 
@@ -90,16 +91,18 @@ DB_NAME=seu_banco
 DB_USER=seu_usuario
 DB_PASS=sua_senha
 ALLOWED_ORIGIN=https://travelflow.tur.br
-API_KEY=sua_chave_secreta_longa
+API_KEY=chave_para_todos_os_usuarios
+ADMIN_KEY=chave_somente_para_administradores
 ```
 
 > **Importante:** `db.conf` contém credenciais sensíveis. Nunca o envie para repositórios públicos ou o deixe acessível via browser. Configure seu servidor para bloquear o acesso direto a arquivos `.conf`.
 
-#### 4. Gere uma API Key segura
+#### 4. Gere as chaves
 
-Execute no terminal do servidor ou na sua máquina:
+Gere duas chaves **diferentes** — uma para `API_KEY` e outra para `ADMIN_KEY`:
 
 ```bash
+openssl rand -hex 32
 openssl rand -hex 32
 ```
 
@@ -128,7 +131,7 @@ curl -H "X-Api-Key: sua_chave" \
 
 #### 1. Baixe os arquivos da extensão
 
-Faça o download ou clone o repositório e localize a pasta com os arquivos:
+Faça o download ou clone o repositório em [github.com/rmacari/travelflow-negocios](https://github.com/rmacari/travelflow-negocios) e localize a pasta com os arquivos:
 
 ```
 manifest.json
@@ -152,7 +155,8 @@ options.css
 Após carregar, clique com o **botão direito** no ícone da extensão → **Opções** e preencha:
 
 - **URL do servidor** — a URL da pasta onde você subiu os arquivos PHP
-- **API Key** — a mesma chave definida no `db.conf`
+- **API Key** — a mesma chave `API_KEY` definida no `db.conf`
+- **Admin Key** — a mesma chave `ADMIN_KEY` definida no `db.conf` *(apenas para administradores)*
 
 Clique em **Salvar configurações** e depois em **Testar conexão**.
 
@@ -238,9 +242,11 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 ## Segurança
 
 - As credenciais do banco (`DB_HOST`, `DB_USER`, `DB_PASS`) ficam **apenas no servidor** no arquivo `db.conf` — nunca são expostas na extensão ou no browser
-- A extensão só armazena a URL do servidor e a API Key no `chrome.storage.sync`
-- Os endpoints de gerenciamento de campos exigem o header `X-Api-Key`
-- A comparação da API Key usa `hash_equals()` para evitar ataques de timing
+- A extensão armazena apenas a URL do servidor, API Key e Admin Key no `chrome.storage.sync`
+- **API Key** — usada por todos os usuários para operações normais (salvar, buscar, excluir negócios). Header: `X-Api-Key`
+- **Admin Key** — usada exclusivamente para gerenciamento de campos (add_field, remove_field, get_fields). Header: `X-Admin-Key`. Deve ser diferente da API Key e compartilhada apenas com administradores
+- Usuários sem Admin Key configurada não veem a aba ⚙️ Campos no painel
+- As comparações de chaves usam `hash_equals()` para evitar ataques de timing
 - Nomes de colunas são sanitizados antes de qualquer `ALTER TABLE`
 - Campos padrão do sistema não podem ser removidos via API
 - O CORS aceita apenas a origem definida em `db.conf`

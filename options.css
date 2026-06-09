@@ -253,3 +253,21 @@ body {
 .opt-status-success { color: #1e7a34; }
 .opt-status-error   { color: #b42318; }
 .opt-status-info    { color: #667085; }
+
+/* ---------------------------------------------------------------------------
+   BADGE "OPCIONAL"
+   Usado na seção de Admin Key para indicar que é opcional.
+   --------------------------------------------------------------------------- */
+.opt-badge {
+  display: inline-block;
+  font: 500 11px/1.2 Arial, sans-serif;
+  color: #667085;
+  background: #eef3f8;
+  border: 1px solid #d8deea;
+  border-radius: 20px;
+  padding: 2px 8px;
+  vertical-align: middle;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
