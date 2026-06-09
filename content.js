@@ -253,9 +253,20 @@
     autoFillLeadName();
   }
 
-  async function refreshFormFieldsPreservingData() {
+  function applyFieldOrderToForm(orderedFieldNames) {
     const currentData = getFormData();
-    await loadFormFields();
+    const ordered = [];
+
+    orderedFieldNames.forEach(name => {
+      const field = fields.find(item => item.key === name);
+      if (field) ordered.push(field);
+    });
+
+    fields.forEach(field => {
+      if (!ordered.find(item => item.key === field.key)) ordered.push(field);
+    });
+
+    fields = ordered;
     renderFormFields();
     fillForm(currentData);
   }
@@ -700,7 +711,7 @@
         [reordered[idx - 1], reordered[idx]] = [reordered[idx], reordered[idx - 1]];
         await persistFieldOrder(reordered);
         renderFieldsList(reordered);
-        await refreshFormFieldsPreservingData();
+        applyFieldOrderToForm(reordered.map(field => field.name));
       });
     });
 
@@ -712,7 +723,7 @@
         [reordered[idx], reordered[idx + 1]] = [reordered[idx + 1], reordered[idx]];
         await persistFieldOrder(reordered);
         renderFieldsList(reordered);
-        await refreshFormFieldsPreservingData();
+        applyFieldOrderToForm(reordered.map(field => field.name));
       });
     });
 
@@ -768,7 +779,7 @@
 
   async function persistFieldOrder(orderedFields) {
     const labels = await getSavedFieldLabels();
-    saveFieldConfig(orderedFields.map(f => f.name), labels);
+    await saveFieldConfig(orderedFields.map(f => f.name), labels);
   }
 
   async function addField() {
