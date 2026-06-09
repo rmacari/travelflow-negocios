@@ -736,7 +736,7 @@
         const labels   = await getSavedFieldLabels();
         labels[name]   = newLabel;
         const order    = fieldsList.map(f => f.name);
-        saveFieldConfig(order, labels);
+        await saveFieldConfig(order, labels);
         const statusEl = document.getElementById('tfq-fields-status');
         if (statusEl) { statusEl.textContent = `Rótulo de "${name}" salvo.`; statusEl.className = 'success'; }
       });
@@ -763,7 +763,7 @@
           const labels   = await getSavedFieldLabels();
           delete labels[name];
           const newOrder = fieldsList.filter(f => f.name !== name).map(f => f.name);
-          saveFieldConfig(newOrder, labels);
+          await saveFieldConfig(newOrder, labels);
 
           if (statusEl) { statusEl.textContent = result.message; statusEl.className = 'success'; }
           await loadFormFields();
