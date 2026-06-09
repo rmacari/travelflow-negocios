@@ -1,25 +1,54 @@
 {
   "manifest_version": 3,
-  "name": "Travel Flow Negocios",
-  "version": "0.4.12",
-  "description": "Painel lateral para salvar e gerenciar negócios do lead no Travel Flow CRM, usando banco de dados próprio via conversationId.",
-  "permissions": ["activeTab", "storage"],
+  "name": "Travel Flow Negócios",
+  "version": "0.4.14",
+  "description": "Extensão para o Travel Flow CRM que permite salvar, organizar e acompanhar negócios de leads em um painel lateral prático, com banco de dados próprio.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
   "host_permissions": [
     "https://travelflow.tur.br/*",
     "https://*/*"
   ],
   "options_page": "options.html",
+  "action": {
+    "default_title": "Travel Flow Negócios",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
   "web_accessible_resources": [
     {
-      "resources": ["page-bridge.js"],
-      "matches": ["https://travelflow.tur.br/*"]
+      "resources": [
+        "page-bridge.js"
+      ],
+      "matches": [
+        "https://travelflow.tur.br/*"
+      ]
     }
   ],
   "content_scripts": [
     {
-      "matches": ["https://travelflow.tur.br/*"],
-      "js": ["page-bridge.js", "content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "https://travelflow.tur.br/*"
+      ],
+      "js": [
+        "page-bridge.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
     }
   ]
