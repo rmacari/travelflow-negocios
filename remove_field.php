@@ -7,7 +7,7 @@
  *
  * Executa um ALTER TABLE ... DROP COLUMN no banco MySQL.
  * Protegido por duas camadas:
- *   1. Chave secreta via header X-Admin-Key
+ *   1. Permissão de usuário admin ou owner
  *   2. Bloqueio de campos padrão — apenas colunas personalizadas podem
  *      ser removidas; os campos fixos do sistema são intocáveis.
  *
@@ -15,7 +15,7 @@
  * armazenados nela. Esta operação é irreversível.
  *
  * Método:  POST
- * Header:  X-Admin-Key (obrigatório — somente administradores)
+ * Permissão: usuário admin ou owner
  * Body:    JSON { field_name: string }
  * Resposta: JSON { success: true, message }
  *           ou  { success: false, message }
@@ -31,8 +31,8 @@ require __DIR__ . '/db.php';
 // Envia headers CORS e responde imediatamente a requisições OPTIONS (preflight)
 sendCors();
 
-// Valida a chave secreta antes de qualquer operação
-validateAdminKey();
+// Gerenciar campos exige usuário admin ou owner.
+requireUser('admin');
 
 // ---------------------------------------------------------------------------
 // CAMPOS PADRÃO PROTEGIDOS

@@ -286,6 +286,20 @@
   color: var(--tf-addon-danger);
 }
 
+#tfq-task-status {
+  margin-top: 12px;
+  font: 600 13px/1.4 Arial, sans-serif;
+  color: var(--tf-addon-muted);
+}
+
+#tfq-task-status.success {
+  color: var(--tf-addon-success);
+}
+
+#tfq-task-status.error {
+  color: var(--tf-addon-danger);
+}
+
 
 /* ---------------------------------------------------------------------------
    TEXTAREA
@@ -407,6 +421,11 @@
   background: #e4edf5;
 }
 
+.tfq-mini-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .tfq-mini-btn-danger {
   color: var(--tf-addon-danger);
   background: var(--tf-addon-danger-soft);
@@ -486,6 +505,19 @@
 .tfq-tab-active {
   color: var(--tf-addon-primary);
   border-bottom-color: var(--tf-addon-primary);
+}
+
+.tfq-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: var(--tf-addon-danger);
+  color: #fff;
+  font: 700 11px/1 Arial, sans-serif;
 }
 
 /* ---------------------------------------------------------------------------
@@ -608,8 +640,146 @@
 }
 
 /* ---------------------------------------------------------------------------
+   TAREFAS
+   Resumo, atalhos, lista por vencimento e estados de prioridade.
+   --------------------------------------------------------------------------- */
+.tfq-task-summary {
+  margin-top: 10px;
+}
+
+.tfq-task-summary-btn {
+  width: 100%;
+  border: 1px solid var(--tf-addon-border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: #fff;
+  color: var(--tf-addon-text);
+  font: 600 13px/1.3 Arial, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tfq-task-summary-info {
+  border-color: #b7d5dd;
+  background: #eff9fb;
+  color: var(--tf-addon-primary);
+}
+
+.tfq-task-summary-warning {
+  border-color: #f1d38b;
+  background: #fff8e1;
+  color: #7a5800;
+}
+
+.tfq-task-summary-danger {
+  border-color: #f3c9c4;
+  background: var(--tf-addon-danger-soft);
+  color: var(--tf-addon-danger);
+}
+
+.tfq-task-summary-ok {
+  border-color: #c8e5cf;
+  background: #f0faf3;
+  color: var(--tf-addon-success);
+}
+
+.tfq-task-templates {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.tfq-task-group {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tfq-task-group h4 {
+  margin: 0;
+  font: 700 12px/1.3 Arial, sans-serif;
+  color: var(--tf-addon-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tfq-task-item {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--tf-addon-border);
+  border-left: 4px solid #aab6c5;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+}
+
+.tfq-task-priority-baixa {
+  border-left-color: #8bbf9f;
+}
+
+.tfq-task-priority-normal {
+  border-left-color: var(--tf-addon-primary);
+}
+
+.tfq-task-priority-alta,
+.tfq-task-overdue {
+  border-left-color: var(--tf-addon-danger);
+}
+
+.tfq-task-overdue {
+  background: #fff7f6;
+}
+
+.tfq-task-main {
+  min-width: 0;
+}
+
+.tfq-task-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tfq-task-title-row strong {
+  font: 700 14px/1.3 Arial, sans-serif;
+  color: var(--tf-addon-text);
+  overflow-wrap: anywhere;
+}
+
+.tfq-task-pill {
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--tf-addon-surface-2);
+  color: var(--tf-addon-muted);
+  padding: 3px 7px;
+  font: 700 10px/1.2 Arial, sans-serif;
+  text-transform: uppercase;
+}
+
+.tfq-task-meta {
+  margin-top: 4px;
+  font: 500 11px/1.4 Arial, sans-serif;
+  color: var(--tf-addon-muted);
+  overflow-wrap: anywhere;
+}
+
+.tfq-task-notes {
+  margin-top: 8px;
+  font: 400 13px/1.45 Arial, sans-serif;
+  color: var(--tf-addon-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tfq-task-actions {
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------------------------
    AVISO DE NÃO CONFIGURADO
-   Exibido quando o usuário ainda não preencheu URL e API Key nas Opções.
+   Exibido quando o usuário ainda não configurou servidor ou login.
    --------------------------------------------------------------------------- */
 .tfq-not-configured {
   margin: 12px 16px 0;

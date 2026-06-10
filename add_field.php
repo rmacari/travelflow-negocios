@@ -10,7 +10,7 @@
  * injection. Verifica se a coluna já existe antes de criar.
  *
  * Método:  POST
- * Header:  X-Admin-Key (obrigatório — somente administradores)
+ * Permissão: usuário admin ou owner
  * Body:    JSON { field_name, field_label, field_type, field_options }
  *            field_name — nome da coluna (apenas letras minúsculas,
  *                         números e underscores, mínimo 2 caracteres)
@@ -28,8 +28,8 @@ require __DIR__ . '/db.php';
 // Envia headers CORS e responde imediatamente a requisições OPTIONS (preflight)
 sendCors();
 
-// Valida a chave secreta antes de qualquer operação
-validateAdminKey();
+// Gerenciar campos exige usuário admin ou owner.
+requireUser('admin');
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY

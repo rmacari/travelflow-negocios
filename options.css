@@ -256,7 +256,7 @@ body {
 
 /* ---------------------------------------------------------------------------
    BADGE "OPCIONAL"
-   Usado na seção de Admin Key para indicar que é opcional.
+   Usado em rótulos auxiliares da página de opções.
    --------------------------------------------------------------------------- */
 .opt-badge {
   display: inline-block;

@@ -153,3 +153,110 @@ CREATE TABLE IF NOT EXISTS lead_negocio_field_config (
     PRIMARY KEY (field_name)
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS zap_users (
+
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    username VARCHAR(80) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255) NOT NULL DEFAULT '',
+    role ENUM('viewer', 'editor', 'admin', 'owner') NOT NULL DEFAULT 'editor',
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_login_at TIMESTAMP NULL DEFAULT NULL,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_zap_users_username (username),
+    KEY idx_zap_users_role_active (role, is_active)
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS lead_tasks (
+
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+
+    -- Mesmo contexto universal usado em lead_negocios
+    conversation_id VARCHAR(191) NOT NULL DEFAULT '',
+    source_platform VARCHAR(50) NOT NULL DEFAULT 'travel_flow',
+    source_conversation_id VARCHAR(191) NOT NULL DEFAULT '',
+    lead_name VARCHAR(255) NOT NULL DEFAULT '',
+    lead_phone VARCHAR(32) NOT NULL DEFAULT '',
+
+    -- Vínculo opcional com um negócio específico do lead
+    negocio_id BIGINT UNSIGNED NULL DEFAULT NULL,
+
+    -- Dados da tarefa
+    title VARCHAR(255) NOT NULL,
+    notes TEXT NULL,
+    due_at DATETIME NULL DEFAULT NULL,
+    priority ENUM('baixa', 'normal', 'alta') NOT NULL DEFAULT 'normal',
+    status ENUM('pendente', 'concluida', 'cancelada', 'arquivada') NOT NULL DEFAULT 'pendente',
+    responsavel VARCHAR(255) NOT NULL DEFAULT '',
+
+    -- Auditoria e atribuição
+    assigned_user_id BIGINT UNSIGNED NULL DEFAULT NULL,
+    created_by_user_id BIGINT UNSIGNED NULL DEFAULT NULL,
+    updated_by_user_id BIGINT UNSIGNED NULL DEFAULT NULL,
+
+    completed_at DATETIME NULL DEFAULT NULL,
+    canceled_at DATETIME NULL DEFAULT NULL,
+    archived_at DATETIME NULL DEFAULT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    KEY idx_lead_tasks_context (source_platform, source_conversation_id),
+    KEY idx_lead_tasks_conversation (conversation_id),
+    KEY idx_lead_tasks_phone (lead_phone),
+    KEY idx_lead_tasks_name (lead_name),
+    KEY idx_lead_tasks_status_due (status, due_at),
+    KEY idx_lead_tasks_assigned_due (assigned_user_id, due_at),
+    KEY idx_lead_tasks_negocio (negocio_id),
+
+    CONSTRAINT fk_lead_tasks_negocio
+        FOREIGN KEY (negocio_id)
+        REFERENCES lead_negocios (id)
+        ON DELETE SET NULL,
+
+    CONSTRAINT fk_lead_tasks_assigned_user
+        FOREIGN KEY (assigned_user_id)
+        REFERENCES zap_users (id)
+        ON DELETE SET NULL,
+
+    CONSTRAINT fk_lead_tasks_created_by
+        FOREIGN KEY (created_by_user_id)
+        REFERENCES zap_users (id)
+        ON DELETE SET NULL,
+
+    CONSTRAINT fk_lead_tasks_updated_by
+        FOREIGN KEY (updated_by_user_id)
+        REFERENCES zap_users (id)
+        ON DELETE SET NULL
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS zap_user_sessions (
+
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    revoked_at DATETIME NULL DEFAULT NULL,
+    ip_address VARCHAR(45) NOT NULL DEFAULT '',
+    user_agent VARCHAR(255) NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP NULL DEFAULT NULL,
+
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_zap_user_sessions_token_hash (token_hash),
+    KEY idx_zap_user_sessions_user (user_id),
+    KEY idx_zap_user_sessions_expires (expires_at),
+
+    CONSTRAINT fk_zap_user_sessions_user
+        FOREIGN KEY (user_id)
+        REFERENCES zap_users (id)
+        ON DELETE CASCADE
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

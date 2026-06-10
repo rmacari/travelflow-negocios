@@ -10,8 +10,8 @@
 
   Permite ao usuário configurar:
     - URL do servidor backend
-    - API Key (todos os usuários)
-    - Admin Key (apenas administradores — habilita a aba ⚙️ Campos)
+    - API Key da instalação
+    - Login de usuário
 
   As configurações são salvas via chrome.storage.sync e ficam disponíveis
   em todos os dispositivos onde o usuário estiver logado no Chrome.
@@ -34,12 +34,12 @@
 
     <header class="opt-header">
       <h1 class="opt-title">⚙️ Zap Negócios</h1>
-      <p class="opt-subtitle">Configure a conexão com o servidor usado pelo CRM e pelo WhatsApp Web</p>
+      <p class="opt-subtitle">Configure o servidor do mini CRM universal para WhatsApp Web, leads, negócios, tarefas e lembretes</p>
     </header>
 
     <!-- -----------------------------------------------------------------------
          SEÇÃO: CONEXÃO COM O SERVIDOR
-         URL do servidor e chave de API para todos os usuários
+         URL do servidor e chave de API da instalação
          ----------------------------------------------------------------------- -->
     <section class="opt-card">
       <h2 class="opt-section-title">Conexão com o servidor</h2>
@@ -75,38 +75,48 @@
         </div>
         <p class="opt-hint">
           Chave definida em <code>API_KEY</code> no <code>db.conf</code> do servidor.
-          Necessária para todos os usuários.
+          Necessária para a instalação da extensão.
         </p>
       </div>
     </section>
 
     <!-- -----------------------------------------------------------------------
-         SEÇÃO: ACESSO DE ADMINISTRADOR
-         Admin Key — habilita a aba ⚙️ Campos no painel
+         SEÇÃO: LOGIN DO USUÁRIO
          ----------------------------------------------------------------------- -->
     <section class="opt-card">
-      <h2 class="opt-section-title">Acesso de administrador <span class="opt-badge">opcional</span></h2>
+      <h2 class="opt-section-title">Login do usuário</h2>
 
       <div class="opt-row">
-        <label class="opt-label" for="admin-key">Chave de administrador (Admin Key)</label>
+        <label class="opt-label" for="username">Usuário</label>
+        <input
+          class="opt-input"
+          id="username"
+          type="text"
+          placeholder="ex: maria"
+          autocomplete="username"
+          spellcheck="false"
+        />
+      </div>
+
+      <div class="opt-row">
+        <label class="opt-label" for="password">Senha</label>
         <div class="opt-input-group">
           <input
             class="opt-input"
-            id="admin-key"
+            id="password"
             type="password"
-            placeholder="Deixe em branco se não for administrador"
-            autocomplete="off"
+            placeholder="Digite sua senha"
+            autocomplete="current-password"
             spellcheck="false"
           />
-          <button class="opt-toggle-visibility" id="toggle-admin-key" type="button" title="Mostrar/ocultar chave">👁</button>
+          <button class="opt-toggle-visibility" id="toggle-password" type="button" title="Mostrar/ocultar senha">👁</button>
         </div>
         <p class="opt-hint">
-          Chave definida em <code>ADMIN_KEY</code> no <code>db.conf</code> do servidor.
-          Quando preenchida, habilita a aba <strong>⚙️ Campos</strong> no painel lateral,
-          permitindo adicionar, reordenar e remover campos do formulário.
-          Deixe em branco para usuários comuns.
+          As permissões vêm do papel definido no servidor: viewer, editor, admin ou owner.
         </p>
       </div>
+
+      <div id="current-user" class="opt-status" aria-live="polite"></div>
     </section>
 
     <!-- -----------------------------------------------------------------------
@@ -117,7 +127,7 @@
       <ol class="opt-steps">
         <li>Baixe os arquivos PHP e o <code>schema.sql</code> em <a href="https://github.com/rmacari/zap-negocios" target="_blank" rel="noopener">github.com/rmacari/zap-negocios</a></li>
         <li>Envie todos os arquivos para uma pasta no seu servidor (ex: <code>/httpdocs/zap-negocios/</code>)</li>
-        <li>Importe o <code>schema.sql</code> no seu banco de dados MySQL. Em banco já existente, execute também as migrações necessárias, incluindo <code>migrate_v4.sql</code>.</li>
+        <li>Importe o <code>schema.sql</code> no seu banco de dados MySQL. Em banco já existente, execute também as migrações necessárias, incluindo <code>migrate_v4.sql</code>, <code>migrate_v5.sql</code> e <code>migrate_v6.sql</code>.</li>
         <li>
           Crie o arquivo <code>db.conf</code> na mesma pasta:
           <pre class="opt-pre">DB_HOST=localhost
@@ -125,14 +135,14 @@ DB_NAME=seu_banco
 DB_USER=seu_usuario
 DB_PASS=sua_senha
 ALLOWED_ORIGIN=https://travelflow.tur.br,https://web.whatsapp.com
-API_KEY=chave_para_todos_os_usuarios
-ADMIN_KEY=chave_somente_para_administradores</pre>
+API_KEY=chave_da_instalacao
+SETUP_KEY=chave_para_criar_o_primeiro_owner</pre>
         </li>
         <li>
-          Gere chaves seguras e diferentes para <code>API_KEY</code> e <code>ADMIN_KEY</code>:<br/>
+          Gere chaves seguras e diferentes para <code>API_KEY</code> e <code>SETUP_KEY</code>:<br/>
           <code>openssl rand -hex 32</code>
         </li>
-        <li>Preencha os campos acima e clique em <strong>Salvar configurações</strong></li>
+        <li>Abra <code>setup_owner.php</code> no navegador para criar o primeiro owner, depois faça login nos campos acima</li>
       </ol>
     </section>
 
@@ -140,8 +150,10 @@ ADMIN_KEY=chave_somente_para_administradores</pre>
          BOTÕES E MENSAGEM DE STATUS
          ----------------------------------------------------------------------- -->
     <div class="opt-actions">
-      <button class="opt-btn opt-btn-primary"   id="btn-save" type="button">Salvar configurações</button>
-      <button class="opt-btn opt-btn-secondary" id="btn-test" type="button">Testar conexão</button>
+      <button class="opt-btn opt-btn-secondary" id="btn-save" type="button">Salvar conexão</button>
+      <button class="opt-btn opt-btn-primary"   id="btn-login" type="button">Entrar</button>
+      <button class="opt-btn opt-btn-secondary" id="btn-logout" type="button">Sair</button>
+      <button class="opt-btn opt-btn-secondary" id="btn-test" type="button">Testar sessão</button>
     </div>
 
     <div id="opt-status" class="opt-status" aria-live="polite"></div>

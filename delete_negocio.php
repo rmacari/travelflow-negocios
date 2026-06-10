@@ -6,7 +6,8 @@
  * Endpoint da API para exclusão de um negócio de um lead.
  *
  * Recebe o id do negócio e identificadores do contexto via POST (JSON).
- * A exclusão só é executada se o registro pertencer ao contexto informado.
+ * A exclusão só é executada por administradores e se o registro pertencer
+ * ao contexto informado.
  *
  * Método:  POST
  * Body:    JSON com id e identificadores do contexto
@@ -23,8 +24,8 @@ require __DIR__ . '/db.php';
 // Envia headers CORS e responde imediatamente a requisições OPTIONS (preflight)
 sendCors();
 
-// Valida a chave de API para operações normais
-validateApiKey();
+// Excluir é uma ação destrutiva: exige usuário admin ou owner.
+requireUser('admin');
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY

@@ -10,9 +10,8 @@
  *   - getDb():             retorna uma instância PDO singleton da conexão
  *   - sendCors():          emite os headers HTTP necessários para CORS e
  *                          encerra requisições OPTIONS (preflight)
- *   - validateApiKey():    valida a chave de usuário (API_KEY) — operações normais
- *   - validateAdminKey():  valida a chave de administrador (ADMIN_KEY) —
- *                          gerenciamento de campos (add_field, remove_field, get_fields)
+ *   - validateApiKey():    valida a chave do aplicativo (API_KEY)
+ *   - requireUser():       valida usuário logado e permissões por papel
  *   - getLeadNegocioFields(): lista os campos editáveis da tabela lead_negocios
  *   - getFieldDefinitions(): lista campos com rótulo, tipo, opções e ordem
  *   - sanitizeColumnName(): sanitiza nomes de coluna para ALTER TABLE seguro
@@ -125,7 +124,7 @@ function sendCors()
     header('Content-Type: application/json; charset=utf-8');
     header('Access-Control-Allow-Origin: '  . $origin);
     header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, X-Api-Key, X-Admin-Key');
+    header('Access-Control-Allow-Headers: Content-Type, X-Api-Key, X-Admin-Key, X-Auth-Token, Authorization');
 
     // Responde preflight CORS sem processar a lógica do endpoint
     if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -135,10 +134,11 @@ function sendCors()
 }
 
 /**
- * Valida a chave de usuário enviada no header X-Api-Key da requisição.
+ * Valida a chave do aplicativo enviada no header X-Api-Key da requisição.
  *
- * Usada pelos endpoints de operações normais (get_negocios, save_negocio,
- * delete_negocio) para autenticar requisições de todos os usuários.
+ * Usada como primeira camada para confirmar que a requisição veio de uma
+ * instalação autorizada da extensão. As permissões reais são validadas
+ * pelo usuário logado em requireUser().
  *
  * A chave esperada é definida na chave API_KEY do arquivo db.conf.
  * A comparação usa hash_equals() para evitar ataques de timing.
@@ -159,11 +159,10 @@ function validateApiKey()
 }
 
 /**
- * Valida a chave de administrador enviada no header X-Admin-Key da requisição.
+ * Valida a chave legada de administrador enviada no header X-Admin-Key.
  *
- * Usada exclusivamente pelos endpoints de gerenciamento de campos
- * (get_fields, add_field, remove_field) para restringir essas operações
- * destrutivas apenas a usuários administradores.
+ * Mantida apenas para compatibilidade com versões antigas. A versão atual
+ * usa requireUser('admin') para ações administrativas.
  *
  * A chave esperada é definida na chave ADMIN_KEY do arquivo db.conf,
  * que deve ser diferente da API_KEY e compartilhada apenas com admins.
@@ -182,6 +181,172 @@ function validateAdminKey()
         echo json_encode(['success' => false, 'message' => 'Acesso negado. Chave de administrador inválida ou ausente.']);
         exit;
     }
+}
+
+function getRoleLevels()
+{
+    return [
+        'viewer' => 10,
+        'editor' => 20,
+        'admin'  => 30,
+        'owner'  => 40,
+    ];
+}
+
+function normalizeUserRole($role)
+{
+    $role = strtolower(trim((string) $role));
+    return array_key_exists($role, getRoleLevels()) ? $role : 'viewer';
+}
+
+function getRoleLevel($role)
+{
+    $levels = getRoleLevels();
+    $role = normalizeUserRole($role);
+    return $levels[$role] ?? 0;
+}
+
+function userHasRole($user, $minRole)
+{
+    return getRoleLevel($user['role'] ?? '') >= getRoleLevel($minRole);
+}
+
+function getBearerToken()
+{
+    $header = $_SERVER['HTTP_AUTHORIZATION']
+        ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
+        ?? '';
+
+    if (preg_match('/Bearer\s+(.+)/i', $header, $matches)) {
+        return trim($matches[1]);
+    }
+
+    return trim($_SERVER['HTTP_X_AUTH_TOKEN'] ?? '');
+}
+
+function tableExists($tableName)
+{
+    $config = loadConfig(__DIR__ . '/db.conf');
+    $dbName = $config['DB_NAME'] ?? '';
+
+    $stmt = getDb()->prepare("
+        SELECT COUNT(*) AS total
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = :db_name
+          AND TABLE_NAME = :table_name
+    ");
+    $stmt->execute(['db_name' => $dbName, 'table_name' => $tableName]);
+
+    return (int) $stmt->fetch()['total'] > 0;
+}
+
+function requireAuthTables()
+{
+    if (!tableExists('zap_users') || !tableExists('zap_user_sessions')) {
+        http_response_code(503);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Execute migrate_v5.sql no servidor para ativar usuários e permissões.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+}
+
+function requireUser($minRole = 'viewer')
+{
+    validateApiKey();
+    requireAuthTables();
+
+    $token = getBearerToken();
+    if ($token === '') {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'message' => 'Login obrigatório.']);
+        exit;
+    }
+
+    $tokenHash = hash('sha256', $token);
+    $stmt = getDb()->prepare("
+        SELECT
+            u.id,
+            u.username,
+            u.full_name,
+            u.role,
+            u.is_active,
+            s.id AS session_id
+        FROM zap_user_sessions s
+        INNER JOIN zap_users u ON u.id = s.user_id
+        WHERE s.token_hash = :token_hash
+          AND s.revoked_at IS NULL
+          AND s.expires_at > NOW()
+        LIMIT 1
+    ");
+    $stmt->execute(['token_hash' => $tokenHash]);
+    $user = $stmt->fetch();
+
+    if (!$user || (int) $user['is_active'] !== 1) {
+        http_response_code(401);
+        echo json_encode(['success' => false, 'message' => 'Sessão inválida ou expirada. Faça login novamente.']);
+        exit;
+    }
+
+    $user['id'] = (int) $user['id'];
+    $user['session_id'] = (int) $user['session_id'];
+    $user['role'] = normalizeUserRole($user['role']);
+    $user['role_level'] = getRoleLevel($user['role']);
+
+    if (!userHasRole($user, $minRole)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Permissão insuficiente para esta ação.']);
+        exit;
+    }
+
+    $touch = getDb()->prepare('UPDATE zap_user_sessions SET last_used_at = NOW() WHERE id = :id');
+    $touch->execute(['id' => $user['session_id']]);
+
+    return $user;
+}
+
+function publicUser($user)
+{
+    return [
+        'id'        => (int) $user['id'],
+        'username'  => $user['username'],
+        'full_name' => $user['full_name'] ?? '',
+        'role'      => normalizeUserRole($user['role'] ?? 'viewer'),
+    ];
+}
+
+function validateSetupKey()
+{
+    $config   = loadConfig(__DIR__ . '/db.conf');
+    $expected = $config['SETUP_KEY'] ?? '';
+    $received = $_SERVER['HTTP_X_SETUP_KEY'] ?? '';
+
+    if ($expected === '' || !hash_equals($expected, $received)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Setup Key inválida ou ausente.']);
+        exit;
+    }
+}
+
+function canManageTargetUser($actor, $targetRole, $targetUserId = 0)
+{
+    if (($actor['id'] ?? 0) === (int) $targetUserId) {
+        return false;
+    }
+
+    $actorRole = normalizeUserRole($actor['role'] ?? 'viewer');
+    $targetRole = normalizeUserRole($targetRole);
+
+    if ($actorRole === 'owner') {
+        return true;
+    }
+
+    if ($actorRole === 'admin') {
+        return in_array($targetRole, ['viewer', 'editor'], true);
+    }
+
+    return false;
 }
 
 function getDefaultFieldMeta()

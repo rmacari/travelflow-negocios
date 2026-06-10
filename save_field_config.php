@@ -7,7 +7,7 @@
  * ordem, rótulo, tipo e opções de listas.
  *
  * Método:  POST
- * Header:  X-Admin-Key (obrigatório)
+ * Permissão: usuário admin ou owner
  * Body:    JSON { fields: [{ name, label, type, options }] }
  * Resposta: JSON { success: true, message, fields }
  * =============================================================================
@@ -16,7 +16,7 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-validateAdminKey();
+requireUser('admin');
 
 $raw  = file_get_contents('php://input');
 $data = json_decode($raw, true);

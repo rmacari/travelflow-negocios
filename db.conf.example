@@ -23,13 +23,14 @@ DB_PASS=sua_senha
 # Origens permitidas para requisições CORS (CRM e WhatsApp Web)
 ALLOWED_ORIGIN=https://travelflow.tur.br,https://web.whatsapp.com
 
-# Chave de API — usada por todos os usuários para operações normais
-# (salvar, buscar e excluir negócios)
+# Chave de API da instalação — primeira camada de proteção da API
 # Gere com: openssl rand -hex 32
 API_KEY=substitua_por_uma_chave_secreta_longa_e_aleatoria
 
-# Chave de administrador — necessária para gerenciar campos (add_field,
-# remove_field, get_fields). Deve ser diferente da API_KEY.
-# Somente informe esta chave nas Opções da extensão de usuários administradores.
-# Gere com: openssl rand -hex 32
-ADMIN_KEY=substitua_por_outra_chave_secreta_longa_e_aleatoria
+# Chave de setup — usada apenas para criar o primeiro usuário owner
+# no endpoint setup_owner.php. Gere com: openssl rand -hex 32
+SETUP_KEY=substitua_por_uma_chave_de_setup_longa_e_aleatoria
+
+# Chave legada para versões antigas da extensão. A versão atual usa usuários
+# e permissões; mantenha vazia ou remova se todos já estiverem na versão nova.
+ADMIN_KEY=legado_opcional_para_versoes_antigas

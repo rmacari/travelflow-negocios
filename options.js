@@ -2,46 +2,23 @@
  * =============================================================================
  * Zap Negócios — options.js
  * =============================================================================
- * Lógica da página de configuração da extensão Chrome.
- *
- * Responsabilidades:
- *   - Carregar configurações salvas do chrome.storage.sync ao abrir a página
- *   - Salvar URL do servidor, API Key e Admin Key no chrome.storage.sync
- *   - Testar a conexão com o servidor via get_negocios.php
- *   - Alternar visibilidade dos campos de chave (mostrar/ocultar)
- *
- * Chaves armazenadas:
- *   tfq_api_base   — URL do servidor backend
- *   tfq_api_key    — Chave de API (todos os usuários)
- *   tfq_admin_key  — Chave de administrador (habilita aba ⚙️ Campos)
- *
- * Autor:   Ricardo Macari
- * Contato: macari@gmail.com
- * Projeto: Zap Negócios
+ * Configuração da conexão e login do usuário.
  * =============================================================================
  */
 
-// ---------------------------------------------------------------------------
-// REFERÊNCIAS AOS ELEMENTOS DO DOM
-// ---------------------------------------------------------------------------
-const inputApiBase   = document.getElementById('api-base');
-const inputApiKey    = document.getElementById('api-key');
-const inputAdminKey  = document.getElementById('admin-key');
-const btnSave        = document.getElementById('btn-save');
-const btnTest        = document.getElementById('btn-test');
-const btnToggleApi   = document.getElementById('toggle-api-key');
-const btnToggleAdmin = document.getElementById('toggle-admin-key');
-const statusEl       = document.getElementById('opt-status');
+const inputApiBase    = document.getElementById('api-base');
+const inputApiKey     = document.getElementById('api-key');
+const inputUsername   = document.getElementById('username');
+const inputPassword   = document.getElementById('password');
+const btnSave         = document.getElementById('btn-save');
+const btnLogin        = document.getElementById('btn-login');
+const btnLogout       = document.getElementById('btn-logout');
+const btnTest         = document.getElementById('btn-test');
+const btnToggleApi    = document.getElementById('toggle-api-key');
+const btnTogglePass   = document.getElementById('toggle-password');
+const statusEl        = document.getElementById('opt-status');
+const currentUserEl   = document.getElementById('current-user');
 
-// ---------------------------------------------------------------------------
-// HELPERS DE FEEDBACK
-// ---------------------------------------------------------------------------
-
-/**
- * Exibe uma mensagem de status abaixo dos botões de ação.
- * @param {string} message - Texto a exibir.
- * @param {'success'|'error'|'info'} type - Classe visual do status.
- */
 function setStatus(message, type) {
   statusEl.textContent = message;
   statusEl.className   = `opt-status opt-status-${type}`;
@@ -50,6 +27,29 @@ function setStatus(message, type) {
 function clearStatus() {
   statusEl.textContent = '';
   statusEl.className   = 'opt-status';
+}
+
+function roleLabel(role) {
+  return {
+    viewer: 'Viewer',
+    editor: 'Editor',
+    admin: 'Admin',
+    owner: 'Owner'
+  }[role] || role || '-';
+}
+
+function setCurrentUser(user) {
+  if (!currentUserEl) return;
+
+  if (!user) {
+    currentUserEl.textContent = 'Nenhum usuário logado.';
+    currentUserEl.className = 'opt-status opt-status-info';
+    return;
+  }
+
+  const name = user.full_name || user.username;
+  currentUserEl.textContent = `Logado como ${name} (${roleLabel(user.role)}).`;
+  currentUserEl.className = 'opt-status opt-status-success';
 }
 
 async function fetchJson(url, options = {}, timeoutMs = 15000) {
@@ -96,142 +96,199 @@ async function fetchJson(url, options = {}, timeoutMs = 15000) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// CARREGAR CONFIGURAÇÕES SALVAS
-// ---------------------------------------------------------------------------
+function getConnectionInputs() {
+  const apiBase = inputApiBase.value.trim().replace(/\/$/, '');
+  const apiKey  = inputApiKey.value.trim();
 
-/**
- * Lê as configurações do chrome.storage.sync e preenche os inputs.
- * Chamada automaticamente ao carregar a página.
- */
-function loadSettings() {
-  chrome.storage.sync.get(['tfq_api_base', 'tfq_api_key', 'tfq_admin_key'], result => {
-    if (result.tfq_api_base)  inputApiBase.value  = result.tfq_api_base;
-    if (result.tfq_api_key)   inputApiKey.value   = result.tfq_api_key;
-    if (result.tfq_admin_key) inputAdminKey.value = result.tfq_admin_key;
-  });
-}
-
-// ---------------------------------------------------------------------------
-// SALVAR CONFIGURAÇÕES
-// ---------------------------------------------------------------------------
-
-/**
- * Valida e salva URL, API Key e Admin Key no chrome.storage.sync.
- * A Admin Key é opcional — pode ser deixada em branco por usuários comuns.
- */
-function saveSettings() {
-  const apiBase  = inputApiBase.value.trim().replace(/\/$/, '');
-  const apiKey   = inputApiKey.value.trim();
-  const adminKey = inputAdminKey.value.trim();
-
-  // Validação da URL
   if (!apiBase) {
-    setStatus('Informe a URL do servidor.', 'error');
-    return;
+    throw new Error('Informe a URL do servidor.');
   }
 
   try {
     new URL(apiBase);
   } catch {
-    setStatus('URL do servidor inválida. Inclua https:// no início.', 'error');
-    return;
+    throw new Error('URL do servidor inválida. Inclua https:// no início.');
   }
 
   if (!apiKey) {
-    setStatus('Informe a API Key.', 'error');
-    return;
+    throw new Error('Informe a API Key.');
   }
 
-  btnSave.disabled = true;
+  return { apiBase, apiKey };
+}
 
-  // Salva as três chaves — adminKey pode ser string vazia (usuário comum)
-  chrome.storage.sync.set({
-    tfq_api_base:  apiBase,
-    tfq_api_key:   apiKey,
-    tfq_admin_key: adminKey
-  }, () => {
-    if (chrome.runtime.lastError) {
-      setStatus(`Erro ao salvar: ${chrome.runtime.lastError.message}`, 'error');
-    } else {
-      const adminMsg = adminKey
-        ? ' Acesso de administrador ativado.'
-        : ' Acesso de administrador não configurado (somente negócios).';
-      setStatus(`Configurações salvas com sucesso! ✓${adminMsg}`, 'success');
-    }
-    btnSave.disabled = false;
+function saveConnection() {
+  try {
+    const { apiBase, apiKey } = getConnectionInputs();
+    const username = inputUsername.value.trim();
+
+    btnSave.disabled = true;
+    chrome.storage.sync.set({
+      tfq_api_base: apiBase,
+      tfq_api_key: apiKey,
+      tfq_username: username
+    }, () => {
+      if (chrome.runtime.lastError) {
+        setStatus(`Erro ao salvar: ${chrome.runtime.lastError.message}`, 'error');
+      } else {
+        setStatus('Conexão salva com sucesso.', 'success');
+      }
+      btnSave.disabled = false;
+    });
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+}
+
+function loadSettings() {
+  chrome.storage.sync.get(['tfq_api_base', 'tfq_api_key', 'tfq_username'], syncResult => {
+    if (syncResult.tfq_api_base) inputApiBase.value = syncResult.tfq_api_base;
+    if (syncResult.tfq_api_key) inputApiKey.value = syncResult.tfq_api_key;
+    if (syncResult.tfq_username) inputUsername.value = syncResult.tfq_username;
+  });
+
+  chrome.storage.local.get(['tfq_user'], localResult => {
+    setCurrentUser(localResult.tfq_user || null);
   });
 }
 
-// ---------------------------------------------------------------------------
-// TESTAR CONEXÃO
-// ---------------------------------------------------------------------------
+async function login() {
+  let apiBase;
+  let apiKey;
 
-/**
- * Testa a conexão com o servidor usando as configurações atuais dos inputs.
- * Usa get_negocios.php com conversation_id fictício — não requer Admin Key.
- */
-async function testConnection() {
+  try {
+    ({ apiBase, apiKey } = getConnectionInputs());
+  } catch (error) {
+    setStatus(error.message, 'error');
+    return;
+  }
+
+  const username = inputUsername.value.trim();
+  const password = inputPassword.value;
+
+  if (!username || !password) {
+    setStatus('Informe usuário e senha.', 'error');
+    return;
+  }
+
+  btnLogin.disabled = true;
+  setStatus('Entrando...', 'info');
+
+  try {
+    const result = await fetchJson(`${apiBase}/login.php`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Api-Key': apiKey
+      },
+      body: JSON.stringify({ username, password })
+    });
+
+    await chrome.storage.sync.set({
+      tfq_api_base: apiBase,
+      tfq_api_key: apiKey,
+      tfq_username: username
+    });
+
+    await chrome.storage.local.set({
+      tfq_auth_token: result.token,
+      tfq_user: result.user
+    });
+
+    inputPassword.value = '';
+    setCurrentUser(result.user);
+    setStatus(result.message || 'Login realizado com sucesso.', 'success');
+    chrome.runtime.sendMessage({ type: 'TFQ_REFRESH_REMINDERS' });
+  } catch (error) {
+    setStatus(`Falha no login: ${error.message}`, 'error');
+  } finally {
+    btnLogin.disabled = false;
+  }
+}
+
+async function logout() {
   const apiBase = inputApiBase.value.trim().replace(/\/$/, '');
-  const apiKey  = inputApiKey.value.trim();
+  const apiKey = inputApiKey.value.trim();
 
-  if (!apiBase || !apiKey) {
-    setStatus('Preencha a URL do servidor e a API Key antes de testar.', 'error');
+  btnLogout.disabled = true;
+  setStatus('Saindo...', 'info');
+
+  try {
+    const stored = await chrome.storage.local.get(['tfq_auth_token']);
+    if (apiBase && apiKey && stored.tfq_auth_token) {
+      await fetchJson(`${apiBase}/logout.php`, {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': apiKey,
+          Authorization: `Bearer ${stored.tfq_auth_token}`
+        }
+      });
+    }
+  } catch {
+    // Mesmo se o servidor falhar, remove a sessão local.
+  }
+
+  await chrome.storage.local.remove(['tfq_auth_token', 'tfq_user', 'tfq_notified_task_keys']);
+  setCurrentUser(null);
+  setStatus('Sessão local encerrada.', 'success');
+  btnLogout.disabled = false;
+}
+
+async function testConnection() {
+  let apiBase;
+  let apiKey;
+
+  try {
+    ({ apiBase, apiKey } = getConnectionInputs());
+  } catch (error) {
+    setStatus(error.message, 'error');
+    return;
+  }
+
+  const stored = await chrome.storage.local.get(['tfq_auth_token']);
+  if (!stored.tfq_auth_token) {
+    setStatus('Faça login antes de testar a sessão.', 'error');
     return;
   }
 
   btnTest.disabled = true;
-  setStatus('Testando conexão...', 'info');
+  setStatus('Testando sessão...', 'info');
 
   try {
-    const result = await fetchJson(
-      `${apiBase}/get_negocios.php?conversation_id=tfq_test_${Date.now()}`,
-      { headers: { 'X-Api-Key': apiKey } }
-    );
+    const result = await fetchJson(`${apiBase}/me.php?_t=${Date.now()}`, {
+      headers: {
+        'X-Api-Key': apiKey,
+        Authorization: `Bearer ${stored.tfq_auth_token}`
+      }
+    });
 
-    if (result.success !== undefined) {
-      setStatus('Conexão bem-sucedida! O servidor está respondendo corretamente. ✓', 'success');
-    } else {
-      throw new Error('Resposta inesperada do servidor.');
-    }
+    await chrome.storage.local.set({ tfq_user: result.user });
+    setCurrentUser(result.user);
+    setStatus('Sessão válida. O servidor está respondendo corretamente.', 'success');
   } catch (error) {
-    setStatus(`Falha na conexão: ${error.message}. Verifique a URL e se o servidor está acessível.`, 'error');
+    setStatus(`Falha na sessão: ${error.message}`, 'error');
   } finally {
     btnTest.disabled = false;
   }
 }
 
-// ---------------------------------------------------------------------------
-// ALTERNAR VISIBILIDADE DAS CHAVES
-// ---------------------------------------------------------------------------
-
-/**
- * Alterna um campo entre tipo password (oculto) e text (visível).
- * @param {HTMLInputElement} input   - Campo a alternar.
- * @param {HTMLButtonElement} button - Botão de toggle correspondente.
- */
 function toggleVisibility(input, button) {
-  const isPassword  = input.type === 'password';
-  input.type        = isPassword ? 'text' : 'password';
+  const isPassword = input.type === 'password';
+  input.type = isPassword ? 'text' : 'password';
   button.textContent = isPassword ? '🙈' : '👁';
-  button.title       = isPassword ? 'Ocultar chave' : 'Mostrar chave';
+  button.title = isPassword ? 'Ocultar' : 'Mostrar';
 }
 
-// ---------------------------------------------------------------------------
-// EVENT LISTENERS
-// ---------------------------------------------------------------------------
-btnSave.addEventListener('click', saveSettings);
+btnSave.addEventListener('click', saveConnection);
+btnLogin.addEventListener('click', login);
+btnLogout.addEventListener('click', logout);
 btnTest.addEventListener('click', testConnection);
-btnToggleApi.addEventListener('click',   () => toggleVisibility(inputApiKey,   btnToggleApi));
-btnToggleAdmin.addEventListener('click', () => toggleVisibility(inputAdminKey, btnToggleAdmin));
+btnToggleApi.addEventListener('click', () => toggleVisibility(inputApiKey, btnToggleApi));
+btnTogglePass.addEventListener('click', () => toggleVisibility(inputPassword, btnTogglePass));
 
-// Salva ao pressionar Enter em qualquer campo
-[inputApiBase, inputApiKey, inputAdminKey].forEach(input => {
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') saveSettings(); });
-  input.addEventListener('input',   clearStatus);
+[inputApiBase, inputApiKey, inputUsername, inputPassword].forEach(input => {
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+  input.addEventListener('input', clearStatus);
 });
 
-// ---------------------------------------------------------------------------
-// INICIALIZAÇÃO
-// ---------------------------------------------------------------------------
 loadSettings();

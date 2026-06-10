@@ -9,6 +9,7 @@
  * Parâmetros aceitos:
  *   - conversation_id
  *   - lead_phone
+ *   - lead_name
  *   - source_platform
  *   - source_conversation_id
  * =============================================================================
@@ -17,10 +18,11 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-validateApiKey();
+requireUser('viewer');
 
 $conversationId       = trim($_GET['conversation_id'] ?? '');
 $leadPhone            = normalizeLeadPhone($_GET['lead_phone'] ?? '');
+$leadName             = trim($_GET['lead_name'] ?? '');
 $sourcePlatform       = normalizeSourcePlatform($_GET['source_platform'] ?? '');
 $sourceConversationId = trim($_GET['source_conversation_id'] ?? '');
 
@@ -28,6 +30,7 @@ $where  = [];
 $params = [];
 $columns = array_column(getLeadNegocioColumnMeta(), 'COLUMN_NAME');
 $hasLeadPhone = in_array('lead_phone', $columns, true);
+$hasLeadName = in_array('nome_lead', $columns, true);
 $hasSourceContext = in_array('source_platform', $columns, true)
     && in_array('source_conversation_id', $columns, true);
 
@@ -39,6 +42,11 @@ if ($conversationId !== '') {
 if ($leadPhone !== '' && $hasLeadPhone) {
     $where[] = 'lead_phone = :lead_phone';
     $params['lead_phone'] = $leadPhone;
+}
+
+if ($sourcePlatform === 'whatsapp_web' && $leadPhone === '' && $leadName !== '' && strlen($leadName) >= 3 && $hasLeadName) {
+    $where[] = 'nome_lead = :lead_name';
+    $params['lead_name'] = $leadName;
 }
 
 if ($sourceConversationId !== '' && $hasSourceContext) {

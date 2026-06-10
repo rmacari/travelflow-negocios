@@ -7,7 +7,7 @@
  * rótulo, tipo visual, opções de select, ordem, campo padrão e removível.
  *
  * Método:   GET
- * Header:   X-Admin-Key (obrigatório)
+ * Permissão: usuário admin ou owner
  * Resposta: JSON { success: true, fields: [...] }
  * =============================================================================
  */
@@ -17,7 +17,7 @@ require __DIR__ . '/db.php';
 sendCors();
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
-validateAdminKey();
+requireUser('admin');
 
 try {
     echo json_encode([
