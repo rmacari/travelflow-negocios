@@ -198,6 +198,7 @@ Clique em **Entrar** e depois em **Testar sessão**.
 | `migrate_v5.sql` | Adiciona usuários, sessões e permissões |
 | `migrate_v6.sql` | Adiciona tarefas, lembretes e notificações |
 | `migrate_v7.sql` | Adiciona auditoria, backup/exportação e exclusão reversível de negócios |
+| `migrate.php` | Migrador idempotente protegido por `API_KEY` e `SETUP_KEY` |
 | `db.conf.example` | Modelo do arquivo de configuração |
 | `db.php` | Conexão PDO, CORS, autenticação, permissões e sanitização de colunas |
 | `login.php` | Autentica usuário e cria sessão |
@@ -214,6 +215,7 @@ Clique em **Entrar** e depois em **Testar sessão**.
 | `sync_lead_identity.php` | Preenche automaticamente o telefone normalizado em negócios antigos do lead *(requer editor, admin ou owner)* |
 | `export_backup.php` | Gera backup JSON dos dados operacionais, sem hashes de senha/sessão *(requer admin ou owner)* |
 | `audit_log.php` | Lista eventos recentes de auditoria *(requer admin ou owner)* |
+| `diagnostics.php` | Mostra diagnóstico de tabelas, colunas e migrações *(requer admin ou owner)* |
 | `get_fields.php` | Lista campos e metadados administrativos *(requer admin ou owner)* |
 | `save_field_config.php` | Salva ordem, rótulo, tipo e opções dos campos *(requer admin ou owner)* |
 | `add_field.php` | Adiciona nova coluna e sua configuração visual *(requer admin ou owner)* |

@@ -41,7 +41,7 @@ function scheduleReminderAlarm() {
 }
 
 function notificationKey(task) {
-  return `${task.id}:${task.due_at || ''}`;
+  return `${task.id}:${task.status || ''}:${task.due_at || ''}:${task.updated_at || ''}`;
 }
 
 function parseTaskDate(value) {

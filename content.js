@@ -43,11 +43,21 @@
   const LEAD_NAME_SELECTOR = 'h3.font-semibold:not(.truncate)';
   const TRAVEL_FLOW_HOST   = 'travelflow.tur.br';
   const WHATSAPP_HOST      = 'web.whatsapp.com';
+  const INTERNAL_FIELD_KEYS = new Set(['deleted_at', 'deleted_by_user_id']);
+  const DEFAULT_TOGGLE_SETTINGS = {
+    label: 'Negócios',
+    x: null,
+    y: 120,
+    color: '#ce1212'
+  };
 
   let API_BASE  = '';
   let API_KEY   = '';
   let AUTH_TOKEN = '';
   let CURRENT_USER = null;
+  let toggleSettings = { ...DEFAULT_TOGGLE_SETTINGS };
+  let toggleDragState = null;
+  let suppressNextToggleClick = false;
 
   function loadUserConfig() {
     return new Promise(resolve => {
@@ -95,6 +105,15 @@
     return hasRole('owner');
   }
 
+  function isInternalField(field) {
+    return INTERNAL_FIELD_KEYS.has(field && (field.key || field.name));
+  }
+
+  function hasDeletedAtValue(value) {
+    const text = String(value || '').trim();
+    return text !== '' && text !== '0000-00-00' && text !== '0000-00-00 00:00:00';
+  }
+
   function apiHeaders(extra = {}) {
     const headers = { 'X-Api-Key': API_KEY, ...extra };
     if (AUTH_TOKEN) headers.Authorization = `Bearer ${AUTH_TOKEN}`;
@@ -107,6 +126,242 @@
 
   function adminApiHeaders(extra = {}) {
     return apiHeaders(extra);
+  }
+
+  function clampNumber(value, min, max) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return min;
+    return Math.max(min, Math.min(max, number));
+  }
+
+  function normalizeToggleSettings(value = {}) {
+    const label = String(value.label || DEFAULT_TOGGLE_SETTINGS.label).trim().slice(0, 24);
+    const color = /^#[0-9a-f]{6}$/i.test(String(value.color || ''))
+      ? String(value.color)
+      : DEFAULT_TOGGLE_SETTINGS.color;
+    const fallbackX = value.side === 'left'
+      ? 16
+      : Math.max(16, window.innerWidth - 120);
+    const x = clampNumber(value.x ?? fallbackX, 8, Math.max(8, window.innerWidth - 56));
+    const y = clampNumber(value.y ?? value.top ?? DEFAULT_TOGGLE_SETTINGS.y, 8, Math.max(8, window.innerHeight - 44));
+
+    return {
+      label: label || DEFAULT_TOGGLE_SETTINGS.label,
+      x,
+      y,
+      color
+    };
+  }
+
+  function applyToggleSettings() {
+    const toggle = getToggle();
+    if (!toggle) return;
+
+    const settings = normalizeToggleSettings(toggleSettings);
+    toggle.textContent = settings.label;
+    toggle.style.setProperty('--tfq-toggle-bg', settings.color);
+    toggle.style.setProperty('--tfq-toggle-x', `${settings.x}px`);
+    toggle.style.setProperty('--tfq-toggle-y', `${settings.y}px`);
+    toggleSettings = settings;
+  }
+
+  function loadToggleSettings() {
+    return new Promise(resolve => {
+      try {
+        chrome.storage.sync.get(['tfq_toggle_settings'], result => {
+          toggleSettings = normalizeToggleSettings(result.tfq_toggle_settings || {});
+          applyToggleSettings();
+          resolve(toggleSettings);
+        });
+      } catch {
+        toggleSettings = { ...DEFAULT_TOGGLE_SETTINGS };
+        applyToggleSettings();
+        resolve(toggleSettings);
+      }
+    });
+  }
+
+  function saveToggleSettings(settings) {
+    toggleSettings = normalizeToggleSettings(settings);
+    applyToggleSettings();
+
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.sync.set({ tfq_toggle_settings: toggleSettings }, () => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+          resolve(toggleSettings);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  function getToggleAppearanceStatusEl() {
+    return document.getElementById('tfq-toggle-appearance-status');
+  }
+
+  function setToggleAppearanceStatus(message, type = '') {
+    const el = getToggleAppearanceStatusEl();
+    if (!el) return;
+    el.textContent = message || '';
+    el.className = type ? type : '';
+  }
+
+  function renderToggleAppearanceForm() {
+    const labelInput = document.getElementById('tfq-toggle-label');
+    const xInput = document.getElementById('tfq-toggle-x');
+    const xNumberInput = document.getElementById('tfq-toggle-x-number');
+    const yInput = document.getElementById('tfq-toggle-y');
+    const yNumberInput = document.getElementById('tfq-toggle-y-number');
+    const colorInput = document.getElementById('tfq-toggle-color');
+
+    if (!labelInput || !xInput || !xNumberInput || !yInput || !yNumberInput || !colorInput) return;
+
+    const settings = normalizeToggleSettings(toggleSettings);
+    const maxX = Math.max(8, window.innerWidth - 56);
+    const maxY = Math.max(8, window.innerHeight - 44);
+    labelInput.value = settings.label;
+    xInput.max = String(maxX);
+    xNumberInput.max = String(maxX);
+    yInput.max = String(maxY);
+    yNumberInput.max = String(maxY);
+    xInput.value = String(settings.x);
+    xNumberInput.value = String(settings.x);
+    yInput.value = String(settings.y);
+    yNumberInput.value = String(settings.y);
+    colorInput.value = settings.color;
+    applyToggleSettings();
+  }
+
+  function collectToggleAppearanceForm() {
+    return normalizeToggleSettings({
+      label: document.getElementById('tfq-toggle-label')?.value || DEFAULT_TOGGLE_SETTINGS.label,
+      x: document.getElementById('tfq-toggle-x-number')?.value || document.getElementById('tfq-toggle-x')?.value,
+      y: document.getElementById('tfq-toggle-y-number')?.value || document.getElementById('tfq-toggle-y')?.value,
+      color: document.getElementById('tfq-toggle-color')?.value || DEFAULT_TOGGLE_SETTINGS.color
+    });
+  }
+
+  function previewToggleAppearance() {
+    toggleSettings = collectToggleAppearanceForm();
+    applyToggleSettings();
+  }
+
+  async function saveToggleAppearance() {
+    if (!isAdmin()) {
+      setToggleAppearanceStatus('Somente administradores podem alterar o botão.', 'error');
+      return;
+    }
+
+    try {
+      setToggleAppearanceStatus('Salvando aparência do botão...', '');
+      await saveToggleSettings(collectToggleAppearanceForm());
+      renderToggleAppearanceForm();
+      setToggleAppearanceStatus('Aparência do botão salva neste navegador.', 'success');
+    } catch (error) {
+      setToggleAppearanceStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
+  async function resetToggleAppearance() {
+    if (!isAdmin()) {
+      setToggleAppearanceStatus('Somente administradores podem alterar o botão.', 'error');
+      return;
+    }
+
+    try {
+      setToggleAppearanceStatus('Restaurando padrão...', '');
+      await saveToggleSettings(DEFAULT_TOGGLE_SETTINGS);
+      renderToggleAppearanceForm();
+      setToggleAppearanceStatus('Botão restaurado para o padrão.', 'success');
+    } catch (error) {
+      setToggleAppearanceStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
+  function syncTogglePositionInputs() {
+    const settings = normalizeToggleSettings(toggleSettings);
+    const xInput = document.getElementById('tfq-toggle-x');
+    const xNumberInput = document.getElementById('tfq-toggle-x-number');
+    const yInput = document.getElementById('tfq-toggle-y');
+    const yNumberInput = document.getElementById('tfq-toggle-y-number');
+
+    if (xInput) xInput.value = String(settings.x);
+    if (xNumberInput) xNumberInput.value = String(settings.x);
+    if (yInput) yInput.value = String(settings.y);
+    if (yNumberInput) yNumberInput.value = String(settings.y);
+  }
+
+  function setupToggleDragging(toggle) {
+    toggle.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || !isAdmin()) return;
+
+      const rect = toggle.getBoundingClientRect();
+      toggleDragState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: rect.left,
+        originY: rect.top,
+        moved: false
+      };
+
+      toggle.classList.add('tfq-toggle-dragging');
+      toggle.setPointerCapture(event.pointerId);
+    });
+
+    toggle.addEventListener('pointermove', event => {
+      if (!toggleDragState || toggleDragState.pointerId !== event.pointerId) return;
+
+      const dx = event.clientX - toggleDragState.startX;
+      const dy = event.clientY - toggleDragState.startY;
+      if (Math.abs(dx) + Math.abs(dy) > 4) {
+        toggleDragState.moved = true;
+      }
+      if (!toggleDragState.moved) return;
+
+      event.preventDefault();
+      toggleSettings = normalizeToggleSettings({
+        ...toggleSettings,
+        x: toggleDragState.originX + dx,
+        y: toggleDragState.originY + dy
+      });
+      applyToggleSettings();
+      syncTogglePositionInputs();
+    });
+
+    const finishDrag = async event => {
+      if (!toggleDragState || toggleDragState.pointerId !== event.pointerId) return;
+
+      const didMove = toggleDragState.moved;
+      toggleDragState = null;
+      toggle.classList.remove('tfq-toggle-dragging');
+      try {
+        toggle.releasePointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture may already be released by the browser.
+      }
+
+      if (!didMove) return;
+      suppressNextToggleClick = true;
+      window.setTimeout(() => { suppressNextToggleClick = false; }, 250);
+
+      try {
+        await saveToggleSettings(toggleSettings);
+        syncTogglePositionInputs();
+        setToggleAppearanceStatus('Posição do botão salva.', 'success');
+      } catch (error) {
+        setToggleAppearanceStatus(`Erro: ${error.message}`, 'error');
+      }
+    };
+
+    toggle.addEventListener('pointerup', finishDrag);
+    toggle.addEventListener('pointercancel', finishDrag);
   }
 
   function sendRuntimeMessageSafe(message) {
@@ -123,7 +378,7 @@
     }
   }
 
-  async function fetchJson(url, options = {}, timeoutMs = 15000) {
+  async function fetchJson(url, options = {}, timeoutMs = 30000) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
@@ -149,11 +404,17 @@
       }
 
       if (!response.ok) {
-        throw new Error(result.message || `Servidor retornou HTTP ${response.status}.`);
+        const error = new Error(result.message || `Servidor retornou HTTP ${response.status}.`);
+        error.status = response.status;
+        error.payload = result;
+        throw error;
       }
 
       if (result.success === false) {
-        throw new Error(result.message || 'A operação não foi concluída pelo servidor.');
+        const error = new Error(result.message || 'A operação não foi concluída pelo servidor.');
+        error.status = response.status;
+        error.payload = result;
+        throw error;
       }
 
       return result;
@@ -221,9 +482,17 @@
   let syncScheduled             = false;
   let negociosCache             = [];
   let tasksCache                = [];
+  let taskOverviewCache         = [];
+  let taskOverviewFilter        = 'all';
+  let taskAssigneesCache        = [];
   let editingId                 = 0;
   let editingTaskId             = 0;
   let lastFormSignature         = '';
+  let formFieldsLoadedFromServer = false;
+  let formFieldsLoadError        = '';
+  let negociosRequestSeq        = 0;
+  let tasksRequestSeq           = 0;
+  let taskOverviewRequestSeq    = 0;
   let visibilityCheckInterval   = null;
   let lastCheckedConversationId = '';
   let observerDebounceTimer     = null;
@@ -556,6 +825,8 @@
   async function loadFormFields() {
     if (!isConfigured()) {
       fields = [...defaultFields];
+      formFieldsLoadedFromServer = false;
+      formFieldsLoadError = '';
       return;
     }
 
@@ -568,9 +839,13 @@
         throw new Error(result.message || 'Erro ao buscar campos do formulário.');
       }
 
-      fields = result.fields;
+      fields = result.fields.filter(field => !isInternalField(field));
+      formFieldsLoadedFromServer = true;
+      formFieldsLoadError = '';
     } catch (error) {
       fields = [...defaultFields];
+      formFieldsLoadedFromServer = false;
+      formFieldsLoadError = error.message || 'Erro ao carregar campos.';
     }
   }
 
@@ -721,7 +996,7 @@
     const restoreBtn = getRestoreBtn();
     const saveBtn = document.getElementById('tfq-save');
     const canDelete = isAdmin();
-    const isDeleted = Boolean(item && item.deleted_at);
+    const isDeleted = Boolean(item && hasDeletedAtValue(item.deleted_at));
 
     if (editingId > 0 && item) {
       fillForm(item);
@@ -827,7 +1102,7 @@
 
     const options = ['<option value="">-- Novo negócio --</option>'];
     negociosCache.forEach(item => {
-      const deletedPrefix = item.deleted_at ? '[Excluído] ' : '';
+      const deletedPrefix = hasDeletedAtValue(item.deleted_at) ? '[Excluído] ' : '';
       const label = `${deletedPrefix}#${item.id} - ${item.destino || item.nome_lead || 'Sem destino'}`;
       options.push(`<option value="${item.id}">${escapeHtml(label)}</option>`);
     });
@@ -917,7 +1192,7 @@
    *
    * @param {boolean} force      - Se true, ignora cache e recarrega do servidor.
    * @param {boolean} autoSelect - Se true, seleciona automaticamente o negócio
-   *                               de maior ID ao terminar de carregar.
+   *                               ativo de maior ID ao terminar de carregar.
    *                               Deve ser true apenas em trocas de conversa,
    *                               não em recarregamentos manuais ou pós-salvar.
    */
@@ -928,6 +1203,7 @@
     updatePanelTitle();
 
     if (!context.isValid) {
+      negociosRequestSeq++;
       currentConversationId = '';
       negociosCache         = [];
       renderNegociosDropdown();
@@ -942,17 +1218,36 @@
     }
 
     currentConversationId = contextKey;
+    const requestSeq = ++negociosRequestSeq;
+    const isCurrentRequest = () => requestSeq === negociosRequestSeq && getContextKey() === contextKey;
     setStatus('Carregando negócios...', '');
 
     try {
       negociosCache = await fetchNegociosForContext(context);
+      if (!isCurrentRequest()) return;
       const syncResult = await syncLeadIdentityForNegocios(context, negociosCache);
+      if (!isCurrentRequest()) return;
       if (syncResult.updated > 0) {
         negociosCache = await fetchNegociosForContext(context);
+        if (!isCurrentRequest()) return;
       }
 
       renderNegociosDropdown();
       renderTaskNegocioOptions();
+
+      const selectLatestActive = () => {
+        const latestActive = negociosCache.find(item => !hasDeletedAtValue(item.deleted_at));
+        if (!latestActive) {
+          setEditingState(0);
+          return false;
+        }
+
+        const latestId = Number(latestActive.id);
+        setEditingState(latestId, latestActive);
+        const dropdown = getNegociosDropdown();
+        if (dropdown) dropdown.value = latestId;
+        return true;
+      };
 
       if (editingId > 0) {
         // Mantém o negócio em edição se ainda existir no cache (ex: após salvar)
@@ -960,17 +1255,15 @@
         if (active) {
           fillForm(active);
           markFormPristine();
+        } else if (autoSelect) {
+          selectLatestActive();
         } else {
           setEditingState(0);
         }
       } else if (autoSelect && negociosCache.length > 0) {
-        // Troca de conversa: seleciona automaticamente o negócio de maior ID.
+        // Troca de conversa: seleciona automaticamente o negócio ativo de maior ID.
         // negociosCache já vem ordenado por id DESC (mais recente primeiro).
-        const latest   = negociosCache[0];
-        const latestId = Number(latest.id);
-        setEditingState(latestId, latest);
-        const dropdown = getNegociosDropdown();
-        if (dropdown) dropdown.value = latestId;
+        selectLatestActive();
       } else {
         // Recarregamento manual, pós-salvar sem ID ou sem negócios: formulário limpo
         clearForm();
@@ -989,6 +1282,7 @@
       }
 
     } catch (error) {
+      if (!isCurrentRequest()) return;
       negociosCache = [];
       renderNegociosDropdown();
       setStatus(`Erro ao carregar: ${error.message}`, 'error');
@@ -1004,6 +1298,11 @@
     }
     if (!getCurrentContext().isValid) {
       setStatus('Selecione uma conversa primeiro.', 'error');
+      return;
+    }
+    if (!formFieldsLoadedFromServer) {
+      const details = formFieldsLoadError ? ` Detalhe: ${formFieldsLoadError}` : '';
+      setStatus(`Não salvei para evitar perda de campos personalizados. Recarregue os campos ou verifique o servidor.${details}`, 'error');
       return;
     }
     if (!payload.nome_lead) {
@@ -1072,17 +1371,31 @@
     try {
       setStatus('Excluindo negócio...', '');
 
-      const result = await fetchJson(`${API_BASE}/delete_negocio.php`, {
+      const payload = {
+        id:                     editingId,
+        conversation_id:        context.conversationId,
+        lead_phone:             leadPhone,
+        source_platform:        context.platform,
+        source_conversation_id: context.sourceConversationId
+      };
+      const request = body => fetchJson(`${API_BASE}/delete_negocio.php`, {
         method:  'POST',
         headers: adminApiHeaders({ 'Content-Type': 'application/json' }),
-        body:    JSON.stringify({
-          id:                     editingId,
-          conversation_id:        context.conversationId,
-          lead_phone:             leadPhone,
-          source_platform:        context.platform,
-          source_conversation_id: context.sourceConversationId
-        })
+        body:    JSON.stringify(body)
       });
+      let result;
+
+      try {
+        result = await request(payload);
+      } catch (error) {
+        if (!error.payload || !error.payload.requires_force) throw error;
+        const forceOk = window.confirm(`${error.message}\n\nDeseja continuar mesmo assim?`);
+        if (!forceOk) {
+          setStatus('Exclusão cancelada.', '');
+          return;
+        }
+        result = await request({ ...payload, force_by_id: true });
+      }
 
       if (!result.success) {
         throw new Error(result.message || 'Erro ao excluir negócio.');
@@ -1093,7 +1406,7 @@
       currentConversationId = '';
 
       await new Promise(resolve => setTimeout(resolve, 100));
-      await loadNegocios(true);
+      await loadNegocios(true, true);
 
       setStatus(result.message || 'Negócio excluído com sucesso.', 'success');
 
@@ -1121,17 +1434,31 @@
     try {
       setStatus('Restaurando negócio...', '');
 
-      const result = await fetchJson(`${API_BASE}/restore_negocio.php`, {
+      const payload = {
+        id: editingId,
+        conversation_id: context.conversationId,
+        lead_phone: leadPhone,
+        source_platform: context.platform,
+        source_conversation_id: context.sourceConversationId
+      };
+      const request = body => fetchJson(`${API_BASE}/restore_negocio.php`, {
         method: 'POST',
         headers: adminApiHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          id: editingId,
-          conversation_id: context.conversationId,
-          lead_phone: leadPhone,
-          source_platform: context.platform,
-          source_conversation_id: context.sourceConversationId
-        })
+        body: JSON.stringify(body)
       });
+      let result;
+
+      try {
+        result = await request(payload);
+      } catch (error) {
+        if (!error.payload || !error.payload.requires_force) throw error;
+        const forceOk = window.confirm(`${error.message}\n\nDeseja continuar mesmo assim?`);
+        if (!forceOk) {
+          setStatus('Restauração cancelada.', '');
+          return;
+        }
+        result = await request({ ...payload, force_by_id: true });
+      }
 
       setEditingState(0);
       negociosCache = [];
@@ -1156,6 +1483,7 @@
     currentConversationId = '';
     negociosCache         = [];
     tasksCache            = [];
+    taskOverviewCache     = [];
     editingId             = 0;
     editingTaskId         = 0;
     lastFormSignature     = '';
@@ -1453,8 +1781,11 @@
       const result = await fetchJson(`${API_BASE}/users.php?_t=${Date.now()}`, {
         headers: adminHeaders()
       });
-      renderUsersList(Array.isArray(result.users) ? result.users : []);
-      statusEl.textContent = `${(result.users || []).length} usuário(s) encontrado(s).`;
+      const users = Array.isArray(result.users) ? result.users : [];
+      renderUsersList(users);
+      taskAssigneesCache = users.filter(user => Number(user.is_active) === 1);
+      renderTaskAssigneeOptions();
+      statusEl.textContent = `${users.length} usuário(s) encontrado(s).`;
       statusEl.className = 'success';
     } catch (error) {
       listEl.innerHTML = '';
@@ -1764,6 +2095,124 @@
       && date.getDate() === now.getDate();
   }
 
+  function getUserDisplayName(user) {
+    return (user && (user.full_name || user.username)) || '';
+  }
+
+  function getCurrentUserAssignee() {
+    if (!CURRENT_USER) return null;
+    return {
+      id: Number(CURRENT_USER.id || 0),
+      username: CURRENT_USER.username || '',
+      full_name: CURRENT_USER.full_name || '',
+      is_active: 1
+    };
+  }
+
+  function getTaskAssigneeLabel(task) {
+    return task.assigned_full_name
+      || task.assigned_username
+      || task.responsavel
+      || 'Sem responsável';
+  }
+
+  function getSelectedTaskAssignee() {
+    const select = document.getElementById('tfq-task-assigned-user');
+    const selectedId = select ? Number(select.value || 0) : 0;
+    return taskAssigneesCache.find(user => Number(user.id) === selectedId)
+      || getCurrentUserAssignee();
+  }
+
+  function renderTaskAssigneeOptions(selectedId = '') {
+    const select = document.getElementById('tfq-task-assigned-user');
+    if (!select) return;
+
+    const currentUser = getCurrentUserAssignee();
+    const users = taskAssigneesCache.length
+      ? taskAssigneesCache
+      : (currentUser ? [currentUser] : []);
+    const currentValue = selectedId || select.value || (currentUser ? String(currentUser.id) : '');
+
+    select.innerHTML = users.map(user => {
+      const id = Number(user.id || 0);
+      const label = getUserDisplayName(user) || user.username || `Usuário #${id}`;
+      return `<option value="${id}">${escapeHtml(label)}</option>`;
+    }).join('');
+
+    if ([...select.options].some(option => option.value === String(currentValue))) {
+      select.value = String(currentValue);
+    } else if (currentUser) {
+      select.value = String(currentUser.id);
+    }
+
+    select.disabled = !isAdmin();
+    select.title = isAdmin()
+      ? 'Selecione o responsável pela tarefa'
+      : 'Seu usuário só pode criar tarefas para si';
+  }
+
+  async function loadTaskAssignees(force = false) {
+    const currentUser = getCurrentUserAssignee();
+    if (!isAdmin()) {
+      taskAssigneesCache = currentUser ? [currentUser] : [];
+      renderTaskAssigneeOptions();
+      return;
+    }
+
+    if (!force && taskAssigneesCache.length) {
+      renderTaskAssigneeOptions();
+      return;
+    }
+
+    try {
+      const result = await fetchJson(`${API_BASE}/users.php?_t=${Date.now()}`, {
+        headers: adminHeaders()
+      });
+      taskAssigneesCache = (Array.isArray(result.users) ? result.users : [])
+        .filter(user => Number(user.is_active) === 1);
+      if (currentUser && !taskAssigneesCache.some(user => Number(user.id) === Number(currentUser.id))) {
+        taskAssigneesCache.unshift(currentUser);
+      }
+    } catch {
+      taskAssigneesCache = currentUser ? [currentUser] : [];
+    }
+
+    renderTaskAssigneeOptions();
+  }
+
+  function getTaskLeadLabel(task) {
+    return task.lead_name
+      || task.negocio_nome_lead
+      || task.lead_phone
+      || task.source_conversation_id
+      || task.conversation_id
+      || 'Lead';
+  }
+
+  function getTaskIdentityPayload(task) {
+    return {
+      conversation_id: task.conversation_id || '',
+      source_platform: task.source_platform || getPlatform(),
+      source_conversation_id: task.source_conversation_id || '',
+      lead_name: task.lead_name || task.negocio_nome_lead || '',
+      lead_phone: task.lead_phone || ''
+    };
+  }
+
+  function taskMatchesCurrentContext(task) {
+    const context = getCurrentContext();
+    const taskPhone = normalizePhone(task.lead_phone || '');
+    const contextPhone = normalizePhone(context.leadPhone || getFormLeadPhoneValue());
+
+    if (taskPhone && contextPhone && taskPhone === contextPhone) return true;
+    if (context.conversationId && task.conversation_id === context.conversationId) return true;
+    return Boolean(
+      context.sourceConversationId
+      && task.source_platform === context.platform
+      && task.source_conversation_id === context.sourceConversationId
+    );
+  }
+
   function renderTaskNegocioOptions() {
     const select = document.getElementById('tfq-task-negocio');
     if (!select) return;
@@ -1784,6 +2233,7 @@
   function getTaskFormData() {
     const data = getLeadContextPayload();
     const negocioSelect = document.getElementById('tfq-task-negocio');
+    const assignedUser = getSelectedTaskAssignee();
 
     return {
       ...data,
@@ -1793,7 +2243,8 @@
       title: (document.getElementById('tfq-task-title')?.value || '').trim(),
       due_at: (document.getElementById('tfq-task-due')?.value || '').trim(),
       priority: document.getElementById('tfq-task-priority')?.value || 'normal',
-      responsavel: (document.getElementById('tfq-task-responsavel')?.value || '').trim(),
+      assigned_user_id: assignedUser ? Number(assignedUser.id || 0) : 0,
+      responsavel: getUserDisplayName(assignedUser),
       notes: (document.getElementById('tfq-task-notes')?.value || '').trim()
     };
   }
@@ -1805,7 +2256,7 @@
     const negocio = document.getElementById('tfq-task-negocio');
     const due = document.getElementById('tfq-task-due');
     const priority = document.getElementById('tfq-task-priority');
-    const responsavel = document.getElementById('tfq-task-responsavel');
+    const responsavel = document.getElementById('tfq-task-assigned-user');
     const notes = document.getElementById('tfq-task-notes');
     const formTitle = document.getElementById('tfq-task-form-title');
     const badge = document.getElementById('tfq-task-editing-badge');
@@ -1815,7 +2266,7 @@
     if (negocio) negocio.value = editingId > 0 ? String(editingId) : '';
     if (due) due.value = '';
     if (priority) priority.value = 'normal';
-    if (responsavel) responsavel.value = (CURRENT_USER && (CURRENT_USER.full_name || CURRENT_USER.username)) || '';
+    if (responsavel) renderTaskAssigneeOptions(CURRENT_USER ? String(CURRENT_USER.id || '') : '');
     if (notes) notes.value = '';
     if (formTitle) formTitle.textContent = 'Nova tarefa';
     if (badge) badge.textContent = '';
@@ -1830,7 +2281,7 @@
     const negocio = document.getElementById('tfq-task-negocio');
     const due = document.getElementById('tfq-task-due');
     const priority = document.getElementById('tfq-task-priority');
-    const responsavel = document.getElementById('tfq-task-responsavel');
+    const responsavel = document.getElementById('tfq-task-assigned-user');
     const notes = document.getElementById('tfq-task-notes');
     const formTitle = document.getElementById('tfq-task-form-title');
     const badge = document.getElementById('tfq-task-editing-badge');
@@ -1840,7 +2291,7 @@
     if (negocio) negocio.value = task.negocio_id ? String(task.negocio_id) : '';
     if (due) due.value = toDateTimeLocalValue(task.due_at);
     if (priority) priority.value = task.priority || 'normal';
-    if (responsavel) responsavel.value = task.responsavel || '';
+    if (responsavel) renderTaskAssigneeOptions(task.assigned_user_id ? String(task.assigned_user_id) : '');
     if (notes) notes.value = task.notes || '';
     if (formTitle) formTitle.textContent = 'Editando tarefa';
     if (badge) badge.textContent = `ID #${editingTaskId}`;
@@ -1890,11 +2341,178 @@
     }
   }
 
+  function setTaskOverviewStatus(message, type = '') {
+    const el = document.getElementById('tfq-task-overview-status');
+    if (!el) return;
+    el.textContent = message || '';
+    el.className = type ? type : '';
+  }
+
+  function getTaskOverviewScopeText() {
+    return isAdmin() ? 'na visão geral' : 'nas suas tarefas';
+  }
+
+  function getTaskOverviewStats() {
+    const pending = taskOverviewCache.filter(task => task.status === 'pendente');
+    const overdue = pending.filter(isTaskOverdue);
+    const today = pending.filter(task => !isTaskOverdue(task) && isTaskToday(task));
+    const upcoming = pending.filter(task => {
+      const due = parseTaskDate(task.due_at);
+      return due && !isTaskOverdue(task) && !isTaskToday(task);
+    });
+    const noDue = pending.filter(task => !parseTaskDate(task.due_at));
+
+    return { pending, overdue, today, upcoming, noDue };
+  }
+
+  function getTaskOverviewGroups() {
+    const stats = getTaskOverviewStats();
+
+    if (taskOverviewFilter === 'overdue') {
+      return [{ title: 'Atrasadas', tasks: stats.overdue }];
+    }
+    if (taskOverviewFilter === 'today') {
+      return [{ title: 'Hoje', tasks: stats.today }];
+    }
+    if (taskOverviewFilter === 'upcoming') {
+      return [{ title: 'Próximas', tasks: stats.upcoming }];
+    }
+    if (taskOverviewFilter === 'no_due') {
+      return [{ title: 'Sem prazo', tasks: stats.noDue }];
+    }
+
+    return [
+      { title: 'Atrasadas', tasks: stats.overdue },
+      { title: 'Hoje', tasks: stats.today },
+      { title: 'Próximas', tasks: stats.upcoming },
+      { title: 'Sem prazo', tasks: stats.noDue }
+    ];
+  }
+
+  function renderTaskOverview() {
+    const titleEl = document.getElementById('tfq-task-overview-title');
+    const statsEl = document.getElementById('tfq-task-overview-stats');
+    const listEl = document.getElementById('tfq-task-overview-list');
+    if (!statsEl || !listEl) return;
+
+    if (titleEl) titleEl.textContent = isAdmin() ? 'Visão geral de tarefas' : 'Minhas tarefas';
+
+    const stats = getTaskOverviewStats();
+    const filters = [
+      { key: 'all', label: 'Pendentes', count: stats.pending.length, tone: 'info' },
+      { key: 'overdue', label: 'Atrasadas', count: stats.overdue.length, tone: 'danger' },
+      { key: 'today', label: 'Hoje', count: stats.today.length, tone: 'warning' },
+      { key: 'upcoming', label: 'Próximas', count: stats.upcoming.length, tone: 'info' },
+      { key: 'no_due', label: 'Sem prazo', count: stats.noDue.length, tone: 'ok' }
+    ];
+
+    statsEl.innerHTML = filters.map(filter => `
+      <button
+        class="tfq-task-overview-filter tfq-task-overview-${filter.tone} ${taskOverviewFilter === filter.key ? 'tfq-task-overview-active' : ''}"
+        data-filter="${escapeHtml(filter.key)}"
+        type="button"
+      >
+        <strong>${Number(filter.count)}</strong>
+        <span>${escapeHtml(filter.label)}</span>
+      </button>
+    `).join('');
+
+    statsEl.querySelectorAll('.tfq-task-overview-filter').forEach(btn => {
+      btn.addEventListener('click', () => {
+        taskOverviewFilter = btn.dataset.filter || 'all';
+        renderTaskOverview();
+      });
+    });
+
+    if (stats.pending.length === 0) {
+      listEl.innerHTML = '<div class="tfq-empty">Nenhuma tarefa pendente encontrada.</div>';
+      return;
+    }
+
+    const groups = getTaskOverviewGroups().filter(group => group.tasks.length > 0);
+    if (groups.length === 0) {
+      listEl.innerHTML = '<div class="tfq-empty">Nenhuma tarefa neste filtro.</div>';
+      return;
+    }
+
+    listEl.innerHTML = groups.map(group => `
+      <div class="tfq-task-group">
+        <h4>${escapeHtml(group.title)}</h4>
+        ${group.tasks.map(task => renderTaskItem(task, { showLead: true, source: 'overview' })).join('')}
+      </div>
+    `).join('');
+
+    listEl.querySelectorAll('.tfq-task-overview-edit').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const task = taskOverviewCache.find(item => Number(item.id) === Number(btn.dataset.id));
+        if (task && taskMatchesCurrentContext(task)) fillTaskForm(task);
+      });
+    });
+
+    listEl.querySelectorAll('.tfq-task-overview-action').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const task = taskOverviewCache.find(item => Number(item.id) === Number(btn.dataset.id));
+        runTaskAction(btn.dataset.action, Number(btn.dataset.id), task || null);
+      });
+    });
+  }
+
+  async function loadTaskOverview(force = false) {
+    if (!isConfigured()) {
+      taskOverviewRequestSeq++;
+      taskOverviewCache = [];
+      renderTaskOverview();
+      return;
+    }
+
+    if (!force && taskOverviewCache.length) {
+      renderTaskOverview();
+      return;
+    }
+
+    const requestSeq = ++taskOverviewRequestSeq;
+    const listEl = document.getElementById('tfq-task-overview-list');
+    if (listEl) listEl.innerHTML = '<div class="tfq-empty">Carregando tarefas...</div>';
+    setTaskOverviewStatus('Carregando visão geral...', '');
+
+    try {
+      const params = new URLSearchParams({
+        _t: Date.now().toString(),
+        action: 'overview',
+        status: 'pendente',
+        limit: '300'
+      });
+
+      const result = await fetchJson(`${API_BASE}/tasks.php?${params.toString()}`, {
+        headers: apiHeaders()
+      });
+
+      if (requestSeq !== taskOverviewRequestSeq) return;
+      taskOverviewCache = Array.isArray(result.tasks) ? result.tasks : [];
+      renderTaskOverview();
+
+      const overdueCount = taskOverviewCache.filter(isTaskOverdue).length;
+      const scopeText = getTaskOverviewScopeText();
+      setTaskOverviewStatus(
+        overdueCount > 0
+          ? `${overdueCount} tarefa(s) atrasada(s) ${scopeText}.`
+          : `${taskOverviewCache.length} tarefa(s) pendente(s) ${scopeText}.`,
+        overdueCount > 0 ? 'error' : 'success'
+      );
+    } catch (error) {
+      if (requestSeq !== taskOverviewRequestSeq) return;
+      taskOverviewCache = [];
+      renderTaskOverview();
+      setTaskOverviewStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
   async function loadTasks(force = false) {
     const context = getCurrentContext();
     const contextKey = getContextKey(context);
 
     if (!context.isValid || !isConfigured()) {
+      tasksRequestSeq++;
       tasksCache = [];
       renderTasksList();
       updateTaskSummary();
@@ -1908,6 +2526,8 @@
     }
 
     const listEl = document.getElementById('tfq-tasks-list');
+    const requestSeq = ++tasksRequestSeq;
+    const isCurrentRequest = () => requestSeq === tasksRequestSeq && getContextKey() === contextKey;
     if (listEl) listEl.innerHTML = '<div class="tfq-empty">Carregando tarefas...</div>';
     setTaskStatus('Carregando tarefas...', '');
 
@@ -1922,6 +2542,7 @@
         headers: apiHeaders()
       });
 
+      if (!isCurrentRequest()) return;
       tasksCache = Array.isArray(result.tasks) ? result.tasks : [];
       renderTasksList();
       updateTaskSummary();
@@ -1932,10 +2553,21 @@
         'success'
       );
     } catch (error) {
+      if (!isCurrentRequest()) return;
       tasksCache = [];
       renderTasksList();
       updateTaskSummary();
       setTaskStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
+  function loadPanelSecondaryData() {
+    loadTaskAssignees(true);
+    loadTasks(true);
+
+    const activeTab = document.querySelector(`#${PANEL_ID} .tfq-tab.tfq-tab-active`);
+    if (activeTab && activeTab.dataset.tab === 'tarefas') {
+      loadTaskOverview(true);
     }
   }
 
@@ -2001,7 +2633,11 @@
     });
   }
 
-  function renderTaskItem(task) {
+  function renderTaskItem(task, options = {}) {
+    const source = options.source || 'lead';
+    const showLead = Boolean(options.showLead);
+    const actionClass = source === 'overview' ? 'tfq-task-overview-action' : 'tfq-task-action';
+    const editClass = source === 'overview' ? 'tfq-task-overview-edit' : 'tfq-task-edit';
     const negocioLabel = task.negocio_id
       ? `Negócio #${task.negocio_id}${task.negocio_destino ? ` - ${task.negocio_destino}` : ''}`
       : 'Lead';
@@ -2010,13 +2646,27 @@
     const canWrite = canEdit();
     const canAdminTask = isAdmin();
     const status = task.status || 'pendente';
+    const canEditTask = canWrite && (!showLead || taskMatchesCurrentContext(task));
+    const editTitle = canEditTask
+      ? 'Editar tarefa'
+      : 'Abra o lead desta tarefa para editar os detalhes';
+    const metaItems = [
+      statusLabel(status),
+      formatTaskDue(task.due_at),
+      getTaskAssigneeLabel(task),
+      negocioLabel
+    ];
+
+    if (showLead) {
+      metaItems.unshift(`Lead: ${getTaskLeadLabel(task)}`);
+    }
 
     const primaryAction = status === 'pendente'
-      ? `<button class="tfq-mini-btn tfq-task-action" data-action="complete" data-id="${Number(task.id)}" ${canWrite ? '' : 'disabled'}>Concluir</button>`
-      : `<button class="tfq-mini-btn tfq-task-action" data-action="reopen" data-id="${Number(task.id)}" ${canWrite ? '' : 'disabled'}>Reabrir</button>`;
+      ? `<button class="tfq-mini-btn ${actionClass}" data-action="complete" data-id="${Number(task.id)}" ${canWrite ? '' : 'disabled'}>Concluir</button>`
+      : `<button class="tfq-mini-btn ${actionClass}" data-action="reopen" data-id="${Number(task.id)}" ${canWrite ? '' : 'disabled'}>Reabrir</button>`;
 
     const cancelAction = status === 'pendente'
-      ? `<button class="tfq-mini-btn tfq-task-action" data-action="cancel" data-id="${Number(task.id)}" ${canWrite ? '' : 'disabled'}>Cancelar</button>`
+      ? `<button class="tfq-mini-btn ${actionClass}" data-action="cancel" data-id="${Number(task.id)}" ${canWrite ? '' : 'disabled'}>Cancelar</button>`
       : '';
 
     return `
@@ -2027,16 +2677,16 @@
             <span class="tfq-task-pill">${escapeHtml(priorityLabel(priority))}</span>
           </div>
           <div class="tfq-task-meta">
-            ${escapeHtml(statusLabel(status))} • ${escapeHtml(formatTaskDue(task.due_at))} • ${escapeHtml(task.responsavel || 'Sem responsável')} • ${escapeHtml(negocioLabel)}
+            ${escapeHtml(metaItems.join(' • '))}
           </div>
           ${task.notes ? `<div class="tfq-task-notes">${escapeHtml(task.notes)}</div>` : ''}
         </div>
         <div class="tfq-item-actions tfq-task-actions">
-          <button class="tfq-mini-btn tfq-task-edit" data-id="${Number(task.id)}" ${canWrite ? '' : 'disabled'}>Editar</button>
+          <button class="tfq-mini-btn ${editClass}" data-id="${Number(task.id)}" title="${escapeHtml(editTitle)}" ${canEditTask ? '' : 'disabled'}>Editar</button>
           ${primaryAction}
           ${cancelAction}
-          <button class="tfq-mini-btn tfq-task-action" data-action="archive" data-id="${Number(task.id)}" ${canAdminTask ? '' : 'disabled'}>Arquivar</button>
-          <button class="tfq-mini-btn tfq-mini-btn-danger tfq-task-action" data-action="delete" data-id="${Number(task.id)}" ${canAdminTask ? '' : 'disabled'}>Excluir</button>
+          <button class="tfq-mini-btn ${actionClass}" data-action="archive" data-id="${Number(task.id)}" ${canAdminTask ? '' : 'disabled'}>Arquivar</button>
+          <button class="tfq-mini-btn tfq-mini-btn-danger ${actionClass}" data-action="delete" data-id="${Number(task.id)}" ${canAdminTask ? '' : 'disabled'}>Excluir</button>
         </div>
       </div>
     `;
@@ -2073,6 +2723,7 @@
 
       clearTaskForm();
       await loadTasks(true);
+      await loadTaskOverview(true);
       setTaskStatus(result.message || 'Tarefa salva.', 'success');
       sendRuntimeMessageSafe({ type: 'TFQ_REFRESH_REMINDERS' });
     } catch (error) {
@@ -2082,7 +2733,7 @@
     }
   }
 
-  async function runTaskAction(action, id) {
+  async function runTaskAction(action, id, task = null) {
     const labels = {
       complete: 'concluir esta tarefa?',
       reopen: 'reabrir esta tarefa?',
@@ -2112,12 +2763,13 @@
         body: JSON.stringify({
           action,
           id,
-          ...getLeadContextPayload()
+          ...(task ? getTaskIdentityPayload(task) : getLeadContextPayload())
         })
       });
 
       if (editingTaskId === id) clearTaskForm();
       await loadTasks(true);
+      await loadTaskOverview(true);
       setTaskStatus(result.message || 'Tarefa atualizada.', 'success');
       sendRuntimeMessageSafe({ type: 'TFQ_REFRESH_REMINDERS' });
     } catch (error) {
@@ -2151,6 +2803,7 @@
     toggle.type        = 'button';
     toggle.textContent = 'Negócios';
     toggle.setAttribute('aria-expanded', 'false');
+    setupToggleDragging(toggle);
 
     const panel = document.createElement('aside');
     panel.id    = PANEL_ID;
@@ -2174,8 +2827,7 @@
       <div id="tfq-tabs">
         <button class="tfq-tab tfq-tab-active" data-tab="negocios" type="button">📋 Negócios</button>
         <button class="tfq-tab" data-tab="tarefas" type="button">✅ Tarefas <span id="tfq-task-tab-count" class="tfq-tab-count tfq-hidden"></span></button>
-        <button class="tfq-tab" data-tab="campos" type="button">⚙️ Campos</button>
-        <button class="tfq-tab" data-tab="usuarios" type="button">👤 Usuários</button>
+        <button class="tfq-tab" data-tab="usuarios" type="button">🛡️ Admin</button>
       </div>
 
       <div id="tfq-body">
@@ -2221,7 +2873,14 @@
         <!-- ABA TAREFAS -->
         <div id="tfq-tab-tarefas" class="tfq-tab-pane tfq-tab-pane-hidden">
           <section class="tfq-card">
-            <h3>Tarefas do lead</h3>
+            <h3 id="tfq-task-overview-title">Visão geral de tarefas</h3>
+            <div id="tfq-task-overview-stats" class="tfq-task-overview-stats"></div>
+            <div id="tfq-task-overview-list" class="tfq-task-overview-list"></div>
+            <div id="tfq-task-overview-status"></div>
+          </section>
+
+          <section class="tfq-card">
+            <h3>Tarefas do lead atual</h3>
             <div id="tfq-tasks-list" style="margin-top:10px;"></div>
           </section>
 
@@ -2269,8 +2928,10 @@
               </div>
 
               <div class="tfq-row">
-                <label class="tfq-label" for="tfq-task-responsavel">Responsável</label>
-                <input class="tfq-input" id="tfq-task-responsavel" type="text" />
+                <label class="tfq-label" for="tfq-task-assigned-user">Responsável</label>
+                <select class="tfq-select" id="tfq-task-assigned-user">
+                  <option value="">Carregando usuários...</option>
+                </select>
               </div>
 
               <div class="tfq-row">
@@ -2288,91 +2949,147 @@
           </section>
         </div>
 
-        <!-- ABA CAMPOS -->
-        <div id="tfq-tab-campos" class="tfq-tab-pane tfq-tab-pane-hidden">
-          <section class="tfq-card">
-            <h3>Adicionar campo personalizado</h3>
-            <div class="tfq-row" style="margin-top:10px;">
-              <label class="tfq-label" for="tfq-new-field-name">Nome do campo (snake_case)</label>
-              <input class="tfq-input" id="tfq-new-field-name" type="text" placeholder="ex: numero_voo" />
-            </div>
-            <div class="tfq-row" style="margin-top:10px;">
-              <label class="tfq-label" for="tfq-new-field-label">Rótulo exibido</label>
-              <input class="tfq-input" id="tfq-new-field-label" type="text" placeholder="ex: Número do voo" />
-            </div>
-            <div class="tfq-row" style="margin-top:10px;">
-              <label class="tfq-label" for="tfq-new-field-type">Tipo do campo</label>
-              <select class="tfq-select" id="tfq-new-field-type">
-                <option value="text">Texto</option>
-                <option value="textarea">Texto longo</option>
-                <option value="select">Lista</option>
-                <option value="date">Data</option>
-                <option value="number">Número</option>
-                <option value="currency">Valor</option>
-              </select>
-            </div>
-            <div class="tfq-row tfq-hidden" id="tfq-new-field-options-row" style="margin-top:10px;">
-              <label class="tfq-label" for="tfq-new-field-options">Opções da lista</label>
-              <textarea class="tfq-textarea" id="tfq-new-field-options" rows="3" placeholder="Uma opção por linha"></textarea>
-            </div>
-            <div class="tfq-actions">
-              <button class="tfq-btn tfq-btn-primary" id="tfq-add-field-btn" type="button">Adicionar campo</button>
-            </div>
-          </section>
-
-          <section class="tfq-card">
-            <h3>Campos do formulário</h3>
-            <p class="tfq-fields-hint">Use ↑↓ para reordenar. Edite rótulo, tipo e opções e clique ✓ para salvar no servidor. Campos padrão não podem ser removidos.</p>
-            <div id="tfq-fields-list" style="margin-top:10px;"></div>
-            <div id="tfq-fields-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
-          </section>
-        </div>
-
-        <!-- ABA USUÁRIOS -->
+        <!-- ABA ADMIN -->
         <div id="tfq-tab-usuarios" class="tfq-tab-pane tfq-tab-pane-hidden">
-          <section class="tfq-card">
-            <h3>Adicionar usuário</h3>
-            <div class="tfq-row" style="margin-top:10px;">
-              <label class="tfq-label" for="tfq-new-user-username">Usuário</label>
-              <input class="tfq-input" id="tfq-new-user-username" type="text" placeholder="ex: maria" />
-            </div>
-            <div class="tfq-row" style="margin-top:10px;">
-              <label class="tfq-label" for="tfq-new-user-name">Nome</label>
-              <input class="tfq-input" id="tfq-new-user-name" type="text" placeholder="ex: Maria Silva" />
-            </div>
-            <div class="tfq-row" style="margin-top:10px;">
-              <label class="tfq-label" for="tfq-new-user-password">Senha temporária</label>
-              <input class="tfq-input" id="tfq-new-user-password" type="password" />
-            </div>
-            <div class="tfq-row" style="margin-top:10px;">
-              <label class="tfq-label" for="tfq-new-user-role">Permissão</label>
-              <select class="tfq-select" id="tfq-new-user-role">
-                <option value="viewer">Viewer - só consulta</option>
-                <option value="editor" selected>Editor - consulta e salva</option>
-                <option value="admin">Admin - campos e exclusões</option>
-                <option value="owner">Owner - controle total</option>
-              </select>
-            </div>
-            <div class="tfq-actions">
-              <button class="tfq-btn tfq-btn-primary" id="tfq-add-user-btn" type="button">Adicionar usuário</button>
-            </div>
-          </section>
+          <details class="tfq-card tfq-admin-section" open>
+            <summary class="tfq-admin-summary">
+              <span>Botão flutuante</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <div class="tfq-grid">
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-toggle-label">Texto do botão</label>
+                  <input class="tfq-input" id="tfq-toggle-label" type="text" maxlength="24" placeholder="ex: Negócios" />
+                </div>
 
-          <section class="tfq-card">
-            <h3>Usuários</h3>
-            <div id="tfq-users-list" style="margin-top:10px;"></div>
-            <div id="tfq-users-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
-          </section>
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-toggle-x">Posição horizontal</label>
+                  <div class="tfq-range-row">
+                    <input id="tfq-toggle-x" type="range" min="8" max="1200" step="1" />
+                    <input class="tfq-input" id="tfq-toggle-x-number" type="number" min="8" max="1200" step="1" />
+                  </div>
+                </div>
 
-          <section class="tfq-card">
-            <h3>Backup e auditoria</h3>
-            <div class="tfq-actions">
-              <button class="tfq-btn tfq-btn-primary" id="tfq-download-backup" type="button">Baixar backup JSON</button>
-              <button class="tfq-btn tfq-btn-secondary" id="tfq-reload-audit" type="button">Recarregar auditoria</button>
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-toggle-y">Posição vertical</label>
+                  <div class="tfq-range-row">
+                    <input id="tfq-toggle-y" type="range" min="8" max="720" step="1" />
+                    <input class="tfq-input" id="tfq-toggle-y-number" type="number" min="8" max="720" step="1" />
+                  </div>
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-toggle-color">Cor do botão</label>
+                  <input class="tfq-color-input" id="tfq-toggle-color" type="color" />
+                </div>
+              </div>
+
+              <div class="tfq-actions">
+                <button class="tfq-btn tfq-btn-primary" id="tfq-save-toggle-appearance" type="button">Salvar botão</button>
+                <button class="tfq-btn tfq-btn-secondary" id="tfq-reset-toggle-appearance" type="button">Restaurar padrão</button>
+              </div>
+              <div id="tfq-toggle-appearance-status"></div>
             </div>
-            <div id="tfq-audit-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
-            <div id="tfq-audit-list" class="tfq-audit-list" style="margin-top:10px;"></div>
-          </section>
+          </details>
+
+          <details class="tfq-card tfq-admin-section">
+            <summary class="tfq-admin-summary">
+              <span>Campos personalizados</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <div class="tfq-admin-block">
+                <h3>Adicionar campo personalizado</h3>
+                <div class="tfq-row" style="margin-top:10px;">
+                  <label class="tfq-label" for="tfq-new-field-name">Nome do campo (snake_case)</label>
+                  <input class="tfq-input" id="tfq-new-field-name" type="text" placeholder="ex: numero_voo" />
+                </div>
+                <div class="tfq-row" style="margin-top:10px;">
+                  <label class="tfq-label" for="tfq-new-field-label">Rótulo exibido</label>
+                  <input class="tfq-input" id="tfq-new-field-label" type="text" placeholder="ex: Número do voo" />
+                </div>
+                <div class="tfq-row" style="margin-top:10px;">
+                  <label class="tfq-label" for="tfq-new-field-type">Tipo do campo</label>
+                  <select class="tfq-select" id="tfq-new-field-type">
+                    <option value="text">Texto</option>
+                    <option value="textarea">Texto longo</option>
+                    <option value="select">Lista</option>
+                    <option value="date">Data</option>
+                    <option value="number">Número</option>
+                    <option value="currency">Valor</option>
+                  </select>
+                </div>
+                <div class="tfq-row tfq-hidden" id="tfq-new-field-options-row" style="margin-top:10px;">
+                  <label class="tfq-label" for="tfq-new-field-options">Opções da lista</label>
+                  <textarea class="tfq-textarea" id="tfq-new-field-options" rows="3" placeholder="Uma opção por linha"></textarea>
+                </div>
+                <div class="tfq-actions">
+                  <button class="tfq-btn tfq-btn-primary" id="tfq-add-field-btn" type="button">Adicionar campo</button>
+                </div>
+              </div>
+
+              <div class="tfq-admin-block">
+                <h3>Campos do formulário</h3>
+                <p class="tfq-fields-hint">Use ↑↓ para reordenar. Edite rótulo, tipo e opções e clique ✓ para salvar no servidor. Campos padrão não podem ser removidos.</p>
+                <div id="tfq-fields-list" style="margin-top:10px;"></div>
+                <div id="tfq-fields-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
+              </div>
+            </div>
+          </details>
+
+          <details class="tfq-card tfq-admin-section">
+            <summary class="tfq-admin-summary">
+              <span>Usuários e permissões</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <div class="tfq-admin-block">
+                <h3>Adicionar usuário</h3>
+                <div class="tfq-row" style="margin-top:10px;">
+                  <label class="tfq-label" for="tfq-new-user-username">Usuário</label>
+                  <input class="tfq-input" id="tfq-new-user-username" type="text" placeholder="ex: maria" />
+                </div>
+                <div class="tfq-row" style="margin-top:10px;">
+                  <label class="tfq-label" for="tfq-new-user-name">Nome</label>
+                  <input class="tfq-input" id="tfq-new-user-name" type="text" placeholder="ex: Maria Silva" />
+                </div>
+                <div class="tfq-row" style="margin-top:10px;">
+                  <label class="tfq-label" for="tfq-new-user-password">Senha temporária</label>
+                  <input class="tfq-input" id="tfq-new-user-password" type="password" />
+                </div>
+                <div class="tfq-row" style="margin-top:10px;">
+                  <label class="tfq-label" for="tfq-new-user-role">Permissão</label>
+                  <select class="tfq-select" id="tfq-new-user-role">
+                    <option value="viewer">Viewer - só consulta</option>
+                    <option value="editor" selected>Editor - consulta e salva</option>
+                    <option value="admin">Admin - campos, usuários e exclusões</option>
+                    <option value="owner">Owner - controle total</option>
+                  </select>
+                </div>
+                <div class="tfq-actions">
+                  <button class="tfq-btn tfq-btn-primary" id="tfq-add-user-btn" type="button">Adicionar usuário</button>
+                </div>
+              </div>
+
+              <div class="tfq-admin-block">
+                <h3>Usuários</h3>
+                <div id="tfq-users-list" style="margin-top:10px;"></div>
+                <div id="tfq-users-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
+              </div>
+            </div>
+          </details>
+
+          <details class="tfq-card tfq-admin-section">
+            <summary class="tfq-admin-summary">
+              <span>Backup e auditoria</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <div class="tfq-actions">
+                <button class="tfq-btn tfq-btn-primary" id="tfq-download-backup" type="button">Baixar backup JSON</button>
+                <button class="tfq-btn tfq-btn-secondary" id="tfq-reload-audit" type="button">Recarregar auditoria</button>
+              </div>
+              <div id="tfq-audit-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
+              <div id="tfq-audit-list" class="tfq-audit-list" style="margin-top:10px;"></div>
+            </div>
+          </details>
         </div>
 
       </div>
@@ -2380,18 +3097,21 @@
 
     document.body.appendChild(toggle);
     document.body.appendChild(panel);
+    loadUserConfig()
+      .then(loadToggleSettings)
+      .then(renderToggleAppearanceForm);
 
     async function openPanel() {
       panel.classList.add('tfq-open');
       toggle.setAttribute('aria-expanded', 'true');
 
       await loadUserConfig();
+      await loadToggleSettings();
 
       const notConfiguredEl = document.getElementById('tfq-not-configured');
       const tabsEl          = document.getElementById('tfq-tabs');
       const bodyEl          = document.getElementById('tfq-body');
-      const tabCampos       = panel.querySelector('.tfq-tab[data-tab="campos"]');
-      const tabUsuarios     = panel.querySelector('.tfq-tab[data-tab="usuarios"]');
+      const tabAdmin        = panel.querySelector('.tfq-tab[data-tab="usuarios"]');
       const saveBtn         = document.getElementById('tfq-save');
       const taskSaveBtn     = document.getElementById('tfq-task-save');
       const includeDeletedRow = document.querySelector('label[for="tfq-include-deleted"]');
@@ -2416,23 +3136,13 @@
         taskSaveBtn.title = canEdit() ? 'Salvar tarefa' : 'Seu usuário não tem permissão para salvar tarefas';
       }
 
-      // Mostra aba Campos apenas para administradores
-      if (tabCampos) {
+      if (tabAdmin) {
         if (isAdmin()) {
-          tabCampos.classList.remove('tfq-hidden');
+          tabAdmin.classList.remove('tfq-hidden');
         } else {
-          tabCampos.classList.add('tfq-hidden');
-          // Garante que a aba Negócios esteja ativa se Campos estava selecionada
+          tabAdmin.classList.add('tfq-hidden');
           const tabNegocios = panel.querySelector('.tfq-tab[data-tab="negocios"]');
           if (tabNegocios) tabNegocios.click();
-        }
-      }
-
-      if (tabUsuarios) {
-        if (canManageUsers()) {
-          tabUsuarios.classList.remove('tfq-hidden');
-        } else {
-          tabUsuarios.classList.add('tfq-hidden');
         }
       }
 
@@ -2446,12 +3156,13 @@
       }
 
       updateUserRoleOptions();
+      renderToggleAppearanceForm();
 
       await loadFormFields();
       renderFormFields();
       clearTaskForm();
-      await loadNegocios(true);
-      await loadTasks(true);
+      await loadNegocios(true, true);
+      loadPanelSecondaryData();
     }
 
     function closePanel() {
@@ -2459,7 +3170,11 @@
       toggle.setAttribute('aria-expanded', 'false');
     }
 
-    toggle.addEventListener('click', () => {
+    toggle.addEventListener('click', event => {
+      if (suppressNextToggleClick) {
+        event.preventDefault();
+        return;
+      }
       panel.classList.contains('tfq-open') ? closePanel() : openPanel();
     });
 
@@ -2475,9 +3190,14 @@
         const activePane = document.getElementById(`tfq-tab-${target}`);
         if (activePane) activePane.classList.remove('tfq-tab-pane-hidden');
 
-        if (target === 'campos') loadFields();
-        if (target === 'tarefas') loadTasks(true);
+        if (target === 'tarefas') {
+          loadTaskAssignees();
+          loadTasks(true);
+          loadTaskOverview(true);
+        }
         if (target === 'usuarios') {
+          renderToggleAppearanceForm();
+          loadFields();
           loadUsers();
           loadAuditLog();
         }
@@ -2514,13 +3234,17 @@
       clearTaskForm();
       setTaskStatus('Formulário de tarefa limpo.', '');
     });
-    panel.querySelector('#tfq-task-reload').addEventListener('click', () => loadTasks(true));
+    panel.querySelector('#tfq-task-reload').addEventListener('click', () => {
+      loadTasks(true);
+      loadTaskOverview(true);
+    });
     panel.querySelector('#tfq-reload').addEventListener('click', () => {
       if (!confirmDiscardChanges('Há alterações não salvas. Deseja recarregar e descartá-las?')) return;
       negociosCache         = [];
       currentConversationId = '';
       loadNegocios(true);
       loadTasks(true);
+      loadTaskOverview(true);
     });
     panel.querySelector('#tfq-cancel').addEventListener('click', () => {
       if (!confirmDiscardChanges()) return;
@@ -2534,6 +3258,30 @@
     panel.querySelector('#tfq-add-user-btn').addEventListener('click', addUser);
     panel.querySelector('#tfq-download-backup').addEventListener('click', downloadBackup);
     panel.querySelector('#tfq-reload-audit').addEventListener('click', loadAuditLog);
+    panel.querySelector('#tfq-save-toggle-appearance').addEventListener('click', saveToggleAppearance);
+    panel.querySelector('#tfq-reset-toggle-appearance').addEventListener('click', resetToggleAppearance);
+    panel.querySelector('#tfq-toggle-label').addEventListener('input', previewToggleAppearance);
+    panel.querySelector('#tfq-toggle-color').addEventListener('input', previewToggleAppearance);
+    panel.querySelector('#tfq-toggle-x').addEventListener('input', e => {
+      const numberInput = panel.querySelector('#tfq-toggle-x-number');
+      if (numberInput) numberInput.value = e.target.value;
+      previewToggleAppearance();
+    });
+    panel.querySelector('#tfq-toggle-x-number').addEventListener('input', e => {
+      const rangeInput = panel.querySelector('#tfq-toggle-x');
+      if (rangeInput) rangeInput.value = e.target.value;
+      previewToggleAppearance();
+    });
+    panel.querySelector('#tfq-toggle-y').addEventListener('input', e => {
+      const numberInput = panel.querySelector('#tfq-toggle-y-number');
+      if (numberInput) numberInput.value = e.target.value;
+      previewToggleAppearance();
+    });
+    panel.querySelector('#tfq-toggle-y-number').addEventListener('input', e => {
+      const rangeInput = panel.querySelector('#tfq-toggle-y');
+      if (rangeInput) rangeInput.value = e.target.value;
+      previewToggleAppearance();
+    });
     panel.querySelector('#tfq-new-field-name').addEventListener('keydown', e => {
       if (e.key === 'Enter') addField();
     });
@@ -2626,7 +3374,8 @@
 
   function startVisibilityCheck() {
     if (visibilityCheckInterval) clearInterval(visibilityCheckInterval);
-    visibilityCheckInterval = setInterval(checkVisibility, 300);
+    const intervalMs = getPlatform() === 'whatsapp_web' ? 1000 : 300;
+    visibilityCheckInterval = setInterval(checkVisibility, intervalMs);
   }
 
   function stopVisibilityCheck() {
@@ -2697,6 +3446,7 @@
   const observer = new MutationObserver(() => {
     if (observerDebounceTimer) clearTimeout(observerDebounceTimer);
     observerDebounceTimer = setTimeout(() => {
+      if (!panelInitialized && !hasValidConversation()) return;
       checkVisibility();
     }, 200);
   });

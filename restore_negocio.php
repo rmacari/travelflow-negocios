@@ -26,6 +26,7 @@ $conversationId = trim($data['conversation_id'] ?? '');
 $leadPhone = normalizeLeadPhone($data['lead_phone'] ?? '');
 $sourcePlatform = normalizeSourcePlatform($data['source_platform'] ?? 'travel_flow');
 $sourceConversationId = trim($data['source_conversation_id'] ?? $conversationId);
+$forceById = !empty($data['force_by_id']);
 
 if ($id <= 0) {
     http_response_code(422);
@@ -33,49 +34,11 @@ if ($id <= 0) {
     exit;
 }
 
-if ($conversationId === '' && $leadPhone === '' && $sourceConversationId === '') {
-    http_response_code(422);
-    echo json_encode(['success' => false, 'message' => 'Informe conversation_id, lead_phone ou source_conversation_id.'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
 try {
     requireLeadNegocioSoftDeleteColumns();
 
-    $columns = array_column(getLeadNegocioColumnMeta(), 'COLUMN_NAME');
-    $hasLeadPhone = in_array('lead_phone', $columns, true);
-    $hasSourceContext = in_array('source_platform', $columns, true)
-        && in_array('source_conversation_id', $columns, true);
-    $where = [];
-    $params = ['id' => $id];
-
-    if ($conversationId !== '') {
-        $where[] = 'conversation_id = :conversation_id';
-        $params['conversation_id'] = $conversationId;
-    }
-    if ($leadPhone !== '' && $hasLeadPhone) {
-        $where[] = 'lead_phone = :lead_phone';
-        $params['lead_phone'] = $leadPhone;
-    }
-    if ($sourceConversationId !== '' && $hasSourceContext) {
-        $where[] = '(source_platform = :source_platform AND source_conversation_id = :source_conversation_id)';
-        $params['source_platform'] = $sourcePlatform;
-        $params['source_conversation_id'] = $sourceConversationId;
-    }
-
-    if (empty($where)) {
-        http_response_code(422);
-        echo json_encode([
-            'success' => false,
-            'message' => 'Execute migrate_v4.sql para restaurar negócios fora do Travel Flow.'
-        ], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $select = getDb()->prepare(
-        'SELECT * FROM lead_negocios WHERE id = :id AND (' . implode(' OR ', $where) . ') LIMIT 1'
-    );
-    $select->execute($params);
+    $select = getDb()->prepare('SELECT * FROM lead_negocios WHERE id = :id LIMIT 1');
+    $select->execute(['id' => $id]);
     $before = $select->fetch();
 
     if (!$before) {
@@ -84,7 +47,22 @@ try {
         exit;
     }
 
-    if (empty($before['deleted_at'])) {
+    $hasContext = $conversationId !== '' || $leadPhone !== '' || $sourceConversationId !== '';
+    if (
+        $hasContext
+        && !$forceById
+        && !leadNegocioMatchesContext($before, $conversationId, $leadPhone, $sourcePlatform, $sourceConversationId)
+    ) {
+        http_response_code(409);
+        echo json_encode([
+            'success' => false,
+            'message' => 'O negócio selecionado não pertence ao contexto atual. Confirme para restaurar pelo ID.',
+            'requires_force' => true,
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if (!isDeletedAtValue($before['deleted_at'] ?? '')) {
         echo json_encode([
             'success' => true,
             'message' => 'Negócio já estava ativo.',
@@ -93,11 +71,11 @@ try {
     }
 
     $stmt = getDb()->prepare(
-        'UPDATE lead_negocios
+        "UPDATE lead_negocios
          SET deleted_at = NULL, deleted_by_user_id = NULL
-         WHERE id = :id AND (' . implode(' OR ', $where) . ') AND deleted_at IS NOT NULL'
+         WHERE id = :id"
     );
-    $stmt->execute($params);
+    $stmt->execute(['id' => $id]);
 
     if ($stmt->rowCount() < 1) {
         http_response_code(404);
@@ -117,7 +95,7 @@ try {
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'message' => 'Erro ao restaurar negócio.',
+        'message' => 'Erro ao restaurar negócio: ' . $e->getMessage(),
         'error' => $e->getMessage()
     ], JSON_UNESCAPED_UNICODE);
 }

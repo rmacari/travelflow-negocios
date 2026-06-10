@@ -124,7 +124,7 @@ function sendCors()
     header('Content-Type: application/json; charset=utf-8');
     header('Access-Control-Allow-Origin: '  . $origin);
     header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, X-Api-Key, X-Admin-Key, X-Auth-Token, Authorization');
+    header('Access-Control-Allow-Headers: Content-Type, X-Api-Key, X-Admin-Key, X-Setup-Key, X-Auth-Token, Authorization');
 
     // Responde preflight CORS sem processar a lógica do endpoint
     if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -431,6 +431,14 @@ function requireLeadNegocioSoftDeleteColumns()
     }
 }
 
+function isDeletedAtValue($value)
+{
+    $value = trim((string) $value);
+    return $value !== ''
+        && $value !== '0000-00-00'
+        && $value !== '0000-00-00 00:00:00';
+}
+
 function getDefaultFieldMeta()
 {
     return [
@@ -583,6 +591,21 @@ function normalizeSourcePlatform($platform)
 {
     $platform = strtolower(trim((string) $platform));
     return preg_match('/^[a-z0-9_]{2,50}$/', $platform) ? $platform : 'unknown';
+}
+
+function leadNegocioMatchesContext($row, $conversationId, $leadPhone, $sourcePlatform, $sourceConversationId)
+{
+    if ($conversationId !== '' && (string) ($row['conversation_id'] ?? '') === $conversationId) {
+        return true;
+    }
+
+    if ($leadPhone !== '' && normalizeLeadPhone($row['lead_phone'] ?? '') === $leadPhone) {
+        return true;
+    }
+
+    return $sourceConversationId !== ''
+        && (string) ($row['source_platform'] ?? '') === $sourcePlatform
+        && (string) ($row['source_conversation_id'] ?? '') === $sourceConversationId;
 }
 
 function ensureFieldConfigRows($columns)

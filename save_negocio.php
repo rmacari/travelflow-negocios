@@ -80,20 +80,30 @@ $payload = [];
 
 foreach ($editableFields as $field) {
     if ($field === 'conversation_id') {
-        $payload[$field] = $conversationId;
+        if ($id <= 0 || $conversationId !== '' || array_key_exists($field, $data)) {
+            $payload[$field] = $conversationId;
+        }
     } elseif ($field === 'source_platform') {
-        $payload[$field] = $sourcePlatform;
+        if ($id <= 0 || array_key_exists($field, $data)) {
+            $payload[$field] = $sourcePlatform;
+        }
     } elseif ($field === 'source_conversation_id') {
-        $payload[$field] = $sourceConversationId;
+        if ($id <= 0 || $sourceConversationId !== '' || array_key_exists($field, $data)) {
+            $payload[$field] = $sourceConversationId;
+        }
     } elseif ($field === 'lead_phone') {
-        $payload[$field] = $leadPhone;
+        if ($id <= 0 || $leadPhone !== '' || array_key_exists($field, $data)) {
+            $payload[$field] = $leadPhone;
+        }
     } else {
-        $payload[$field] = trim($data[$field] ?? '');
+        if ($id <= 0 || array_key_exists($field, $data)) {
+            $payload[$field] = trim($data[$field] ?? '');
+        }
     }
 }
 
 // nome_lead é o único campo obrigatório
-if ($payload['nome_lead'] === '') {
+if (($id <= 0 || array_key_exists('nome_lead', $data)) && ($payload['nome_lead'] ?? '') === '') {
     http_response_code(422);
     echo json_encode(['success' => false, 'message' => 'nome_lead é obrigatório.']);
     exit;
@@ -127,6 +137,15 @@ try {
             $identityParams['identity_source_conversation_id'] = $sourceConversationId;
         }
 
+        if (empty($identityWhere)) {
+            http_response_code(422);
+            echo json_encode([
+                'success' => false,
+                'message' => 'Não há identificador compatível no banco para atualizar este negócio.'
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
         $check = $db->prepare(
             'SELECT * FROM lead_negocios WHERE id = :id AND (' . implode(' OR ', $identityWhere) . ') LIMIT 1'
         );
@@ -139,16 +158,25 @@ try {
             exit;
         }
 
-        if ($hasDeletedAtColumn && !empty($before['deleted_at'])) {
+        if ($hasDeletedAtColumn && isDeletedAtValue($before['deleted_at'] ?? '')) {
             http_response_code(409);
             echo json_encode(['success' => false, 'message' => 'Restaure o negócio antes de editar.'], JSON_UNESCAPED_UNICODE);
             exit;
         }
 
         $updateFields = array_values(array_filter(
-            $editableFields,
+            array_keys($payload),
             fn($field) => !in_array($field, ['conversation_id', 'source_platform', 'source_conversation_id'], true)
         ));
+
+        if (empty($updateFields)) {
+            echo json_encode([
+                'success' => true,
+                'message' => 'Nenhum campo enviado para atualização.',
+                'id'      => $id,
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
         $assignments  = array_map(fn($field) => "`{$field}` = :{$field}", $updateFields);
         $sql = "UPDATE lead_negocios SET "
              . implode(', ', $assignments)

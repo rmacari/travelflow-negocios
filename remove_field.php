@@ -110,6 +110,14 @@ try {
     $configBefore = $db->prepare('SELECT * FROM lead_negocio_field_config WHERE field_name = :field_name LIMIT 1');
     $configBefore->execute(['field_name' => $fieldName]);
     $countBefore = $db->query("SELECT COUNT(*) AS total FROM lead_negocios WHERE `{$fieldName}` IS NOT NULL AND `{$fieldName}` <> ''")->fetch();
+    $removedValues = $db->query("
+        SELECT id, LEFT(`{$fieldName}`, 1000) AS removed_value
+        FROM lead_negocios
+        WHERE `{$fieldName}` IS NOT NULL
+          AND `{$fieldName}` <> ''
+        ORDER BY id ASC
+        LIMIT 1000
+    ")->fetchAll();
 
     // ---------------------------------------------------------------------------
     // REMOÇÃO DA COLUNA
@@ -127,6 +135,8 @@ try {
     logAudit($currentUser, 'field.delete_hard', 'lead_negocio_field', $fieldName, [
         'field_config' => $configBefore->fetch(),
         'non_empty_rows' => (int) ($countBefore['total'] ?? 0),
+        'removed_values_sample_limit' => 1000,
+        'removed_values_sample' => $removedValues,
     ], null);
 
     echo json_encode([

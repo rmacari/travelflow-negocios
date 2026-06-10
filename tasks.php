@@ -141,18 +141,38 @@ function buildTaskIdentityWhere($context, $alias = 't')
     return [$where, $params];
 }
 
-function fetchTaskForContext($id, $context)
+function addTaskUserScope(&$where, &$params, $currentUser, $alias = 't')
 {
-    [$where, $params] = buildTaskIdentityWhere($context, 't');
-    $params['id'] = (int) $id;
+    if (userHasRole($currentUser, 'admin')) {
+        return;
+    }
 
-    $stmt = getDb()->prepare("
+    $prefix = $alias ? $alias . '.' : '';
+    $where[] = "({$prefix}assigned_user_id = :task_scope_user_id OR {$prefix}created_by_user_id = :task_scope_user_id)";
+    $params['task_scope_user_id'] = (int) $currentUser['id'];
+}
+
+function fetchTaskForContext($id, $context, $currentUser)
+{
+    [$identityWhere, $params] = buildTaskIdentityWhere($context, 't');
+    $scopeWhere = [];
+    $params['id'] = (int) $id;
+    addTaskUserScope($scopeWhere, $params, $currentUser, 't');
+
+    $sql = "
         SELECT t.*
         FROM lead_tasks t
         WHERE t.id = :id
-          AND (" . implode(' OR ', $where) . ")
-        LIMIT 1
-    ");
+          AND (" . implode(' OR ', $identityWhere) . ")
+    ";
+
+    if ($scopeWhere) {
+        $sql .= ' AND ' . implode(' AND ', $scopeWhere);
+    }
+
+    $sql .= ' LIMIT 1';
+
+    $stmt = getDb()->prepare($sql);
     $stmt->execute($params);
     $task = $stmt->fetch();
 
@@ -170,6 +190,42 @@ function fetchTaskById($id)
     $stmt = getDb()->prepare('SELECT * FROM lead_tasks WHERE id = :id LIMIT 1');
     $stmt->execute(['id' => (int) $id]);
     return $stmt->fetch();
+}
+
+function getUserDisplayName($user)
+{
+    return trim((string) ($user['full_name'] ?? '')) !== ''
+        ? trim((string) $user['full_name'])
+        : trim((string) ($user['username'] ?? ''));
+}
+
+function resolveTaskAssignee($assignedUserId, $currentUser)
+{
+    if (!userHasRole($currentUser, 'admin')) {
+        return $currentUser;
+    }
+
+    $assignedUserId = (int) $assignedUserId;
+    if ($assignedUserId <= 0) {
+        $assignedUserId = (int) $currentUser['id'];
+    }
+
+    $stmt = getDb()->prepare("
+        SELECT id, username, full_name, role, is_active
+        FROM zap_users
+        WHERE id = :id
+        LIMIT 1
+    ");
+    $stmt->execute(['id' => $assignedUserId]);
+    $user = $stmt->fetch();
+
+    if (!$user || (int) $user['is_active'] !== 1) {
+        http_response_code(422);
+        echo json_encode(['success' => false, 'message' => 'Responsável da tarefa inválido ou inativo.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    return $user;
 }
 
 function ensureNegocioBelongsToContext($negocioId, $context)
@@ -206,9 +262,12 @@ function taskSelectSql()
         SELECT
             t.*,
             n.destino AS negocio_destino,
-            n.nome_lead AS negocio_nome_lead
+            n.nome_lead AS negocio_nome_lead,
+            au.username AS assigned_username,
+            au.full_name AS assigned_full_name
         FROM lead_tasks t
         LEFT JOIN lead_negocios n ON n.id = t.negocio_id
+        LEFT JOIN zap_users au ON au.id = t.assigned_user_id
     ";
 }
 
@@ -220,16 +279,21 @@ try {
 
         if ($action === 'reminders') {
             $minutes = max(0, min(1440, (int) ($_GET['minutes'] ?? 15)));
-            $stmt = getDb()->prepare(taskSelectSql() . "
-                WHERE t.status = 'pendente'
-                  AND t.due_at IS NOT NULL
-                  AND t.due_at <= DATE_ADD(NOW(), INTERVAL {$minutes} MINUTE)
-                  AND t.due_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
-                  AND (t.assigned_user_id IS NULL OR t.assigned_user_id = :user_id)
+            $where = [
+                "t.status = 'pendente'",
+                't.due_at IS NOT NULL',
+                "t.due_at <= DATE_ADD(NOW(), INTERVAL {$minutes} MINUTE)",
+                't.due_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)',
+            ];
+            $params = [];
+            addTaskUserScope($where, $params, $currentUser, 't');
+
+            $stmt = getDb()->prepare(taskSelectSql() . '
+                WHERE ' . implode(' AND ', $where) . "
                 ORDER BY t.due_at ASC, t.id ASC
                 LIMIT 50
             ");
-            $stmt->execute(['user_id' => (int) $currentUser['id']]);
+            $stmt->execute($params);
 
             echo json_encode([
                 'success' => true,
@@ -238,13 +302,59 @@ try {
             exit;
         }
 
+        if ($action === 'overview') {
+            $limit = max(20, min(500, (int) ($_GET['limit'] ?? 200)));
+            $includeArchived = !empty($_GET['include_archived']) && userHasRole($currentUser, 'admin');
+            $status = strtolower(trim((string) ($_GET['status'] ?? '')));
+            $where = [];
+            $params = [];
+
+            if (!$includeArchived) {
+                $where[] = "t.status <> 'arquivada'";
+            }
+
+            if ($status !== '' && in_array($status, ['pendente', 'concluida', 'cancelada', 'arquivada'], true)) {
+                $where[] = 't.status = :status';
+                $params['status'] = $status;
+            }
+
+            addTaskUserScope($where, $params, $currentUser, 't');
+
+            $sql = taskSelectSql() . '
+                WHERE ' . ($where ? implode(' AND ', $where) : '1 = 1') . "
+                ORDER BY
+                    FIELD(t.status, 'pendente', 'concluida', 'cancelada', 'arquivada'),
+                    t.due_at IS NULL,
+                    t.due_at ASC,
+                    t.updated_at DESC,
+                    t.id DESC
+                LIMIT {$limit}
+            ";
+
+            $stmt = getDb()->prepare($sql);
+            $stmt->execute($params);
+
+            echo json_encode([
+                'success' => true,
+                'tasks' => $stmt->fetchAll(),
+                'scope' => userHasRole($currentUser, 'admin') ? 'all' : 'own',
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
         $context = getTaskContextFromArray($_GET);
         [$where, $params] = buildTaskIdentityWhere($context, 't');
-        $includeArchived = !empty($_GET['include_archived']);
+        $includeArchived = !empty($_GET['include_archived']) && userHasRole($currentUser, 'admin');
+        $scopeWhere = [];
+        addTaskUserScope($scopeWhere, $params, $currentUser, 't');
 
         $sql = taskSelectSql() . "
             WHERE (" . implode(' OR ', $where) . ")
         ";
+
+        if ($scopeWhere) {
+            $sql .= ' AND ' . implode(' AND ', $scopeWhere);
+        }
 
         if (!$includeArchived) {
             $sql .= " AND t.status <> 'arquivada'";
@@ -264,6 +374,7 @@ try {
         echo json_encode([
             'success' => true,
             'tasks' => $stmt->fetchAll(),
+            'scope' => userHasRole($currentUser, 'admin') ? 'all' : 'own',
         ], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -293,8 +404,9 @@ try {
         $dueAt = normalizeTaskDateTime($data['due_at'] ?? '');
         $priority = normalizeTaskPriority($data['priority'] ?? 'normal');
         $responsavel = trim((string) ($data['responsavel'] ?? ''));
+        $assignedUser = resolveTaskAssignee($data['assigned_user_id'] ?? 0, $currentUser);
         if ($responsavel === '') {
-            $responsavel = trim(($currentUser['full_name'] ?? '') ?: ($currentUser['username'] ?? ''));
+            $responsavel = getUserDisplayName($assignedUser);
         }
         $negocioId = ensureNegocioBelongsToContext((int) ($data['negocio_id'] ?? 0), $context);
         $leadName = trim((string) ($data['lead_name'] ?? ''));
@@ -347,7 +459,7 @@ try {
                 'due_at' => $dueAt,
                 'priority' => $priority,
                 'responsavel' => $responsavel,
-                'assigned_user_id' => (int) $currentUser['id'],
+                'assigned_user_id' => (int) $assignedUser['id'],
                 'created_by_user_id' => (int) $currentUser['id'],
                 'updated_by_user_id' => (int) $currentUser['id'],
             ]);
@@ -369,7 +481,7 @@ try {
             exit;
         }
 
-        $before = fetchTaskForContext($id, $context);
+        $before = fetchTaskForContext($id, $context, $currentUser);
 
         $stmt = $db->prepare("
             UPDATE lead_tasks
@@ -382,6 +494,7 @@ try {
                 due_at = :due_at,
                 priority = :priority,
                 responsavel = :responsavel,
+                assigned_user_id = :assigned_user_id,
                 updated_by_user_id = :updated_by_user_id
             WHERE id = :id
         ");
@@ -394,6 +507,7 @@ try {
             'due_at' => $dueAt,
             'priority' => $priority,
             'responsavel' => $responsavel,
+            'assigned_user_id' => (int) $assignedUser['id'],
             'updated_by_user_id' => (int) $currentUser['id'],
             'id' => $id,
         ]);
@@ -414,7 +528,7 @@ try {
         exit;
     }
 
-    $before = fetchTaskForContext($id, $context);
+    $before = fetchTaskForContext($id, $context, $currentUser);
 
     if ($action === 'complete') {
         $stmt = $db->prepare("

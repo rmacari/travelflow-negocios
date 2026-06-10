@@ -73,17 +73,20 @@ if (empty($where)) {
 }
 
 try {
-    $deletedFilter = ($hasDeletedAt && !$includeDeleted) ? ' AND deleted_at IS NULL' : '';
     $stmt = getDb()->prepare("
         SELECT *
         FROM lead_negocios
         WHERE (" . implode(' OR ', $where) . ")
-        {$deletedFilter}
         ORDER BY id DESC
     ");
 
     $stmt->execute($params);
     $rows = $stmt->fetchAll();
+    if ($hasDeletedAt && !$includeDeleted) {
+        $rows = array_values(array_filter($rows, static function ($row) {
+            return !isDeletedAtValue($row['deleted_at'] ?? '');
+        }));
+    }
 
     echo json_encode([
         'success' => true,
