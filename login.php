@@ -69,6 +69,10 @@ try {
 
     $update = getDb()->prepare('UPDATE zap_users SET last_login_at = NOW() WHERE id = :id');
     $update->execute(['id' => (int) $user['id']]);
+    logAudit(publicUser($user), 'auth.login', 'zap_users', (int) $user['id'], null, [
+        'username' => $user['username'],
+        'session_expires_at' => $expiresAt,
+    ]);
 
     echo json_encode([
         'success'    => true,

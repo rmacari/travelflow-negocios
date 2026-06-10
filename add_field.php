@@ -29,7 +29,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Gerenciar campos exige usuário admin ou owner.
-requireUser('admin');
+$currentUser = requireUser('admin');
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY
@@ -130,6 +130,14 @@ try {
         'field_label'   => $fieldLabel,
         'field_type'    => $fieldType,
         'field_options' => encodeFieldOptions($options),
+        'display_order' => $displayOrder,
+    ]);
+
+    logAudit($currentUser, 'field.create', 'lead_negocio_field', $fieldName, null, [
+        'field_name' => $fieldName,
+        'field_label' => $fieldLabel,
+        'field_type' => $fieldType,
+        'field_options' => $options,
         'display_order' => $displayOrder,
     ]);
 

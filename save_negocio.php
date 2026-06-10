@@ -26,7 +26,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Criar e atualizar negócios exige usuário com permissão de edição
-requireUser('editor');
+$currentUser = requireUser('editor');
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY
@@ -64,6 +64,8 @@ $hasLeadPhoneColumn = in_array('lead_phone', $editableFields, true);
 $hasSourceContextColumns = in_array('source_platform', $editableFields, true)
     && in_array('source_conversation_id', $editableFields, true);
 $hasUniversalContext = $hasLeadPhoneColumn || $hasSourceContextColumns;
+$columnNames = array_column(getLeadNegocioColumnMeta(), 'COLUMN_NAME');
+$hasDeletedAtColumn = in_array('deleted_at', $columnNames, true);
 
 if ($conversationId === '' && !$hasUniversalContext) {
     http_response_code(422);
@@ -126,13 +128,20 @@ try {
         }
 
         $check = $db->prepare(
-            'SELECT id FROM lead_negocios WHERE id = :id AND (' . implode(' OR ', $identityWhere) . ') LIMIT 1'
+            'SELECT * FROM lead_negocios WHERE id = :id AND (' . implode(' OR ', $identityWhere) . ') LIMIT 1'
         );
         $check->execute($identityParams);
+        $before = $check->fetch();
 
-        if (!$check->fetch()) {
+        if (!$before) {
             http_response_code(404);
             echo json_encode(['success' => false, 'message' => 'Negócio não encontrado.']);
+            exit;
+        }
+
+        if ($hasDeletedAtColumn && !empty($before['deleted_at'])) {
+            http_response_code(409);
+            echo json_encode(['success' => false, 'message' => 'Restaure o negócio antes de editar.'], JSON_UNESCAPED_UNICODE);
             exit;
         }
 
@@ -148,6 +157,10 @@ try {
         $stmt = $db->prepare($sql);
         $updateParams = array_intersect_key($payload, array_flip($updateFields));
         $stmt->execute($updateParams + ['id' => $id]);
+
+        $afterStmt = $db->prepare('SELECT * FROM lead_negocios WHERE id = :id LIMIT 1');
+        $afterStmt->execute(['id' => $id]);
+        logAudit($currentUser, 'negocio.update', 'lead_negocios', $id, $before, $afterStmt->fetch());
 
         echo json_encode([
             'success' => true,
@@ -173,11 +186,16 @@ try {
 
     $stmt = $db->prepare($sql);
     $stmt->execute($payload);
+    $newId = (int) $db->lastInsertId();
+
+    $afterStmt = $db->prepare('SELECT * FROM lead_negocios WHERE id = :id LIMIT 1');
+    $afterStmt->execute(['id' => $newId]);
+    logAudit($currentUser, 'negocio.create', 'lead_negocios', $newId, null, $afterStmt->fetch());
 
     echo json_encode([
         'success' => true,
         'message' => 'Negócio criado com sucesso.',
-        'id'      => (int) $db->lastInsertId(),
+        'id'      => $newId,
     ]);
 } catch (Throwable $e) {
     http_response_code(500);

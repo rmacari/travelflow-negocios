@@ -3,7 +3,7 @@
  * =============================================================================
  * Zap Negócios — delete_negocio.php
  * =============================================================================
- * Endpoint da API para exclusão de um negócio de um lead.
+ * Endpoint da API para exclusão reversível de um negócio de um lead.
  *
  * Recebe o id do negócio e identificadores do contexto via POST (JSON).
  * A exclusão só é executada por administradores e se o registro pertencer
@@ -24,8 +24,8 @@ require __DIR__ . '/db.php';
 // Envia headers CORS e responde imediatamente a requisições OPTIONS (preflight)
 sendCors();
 
-// Excluir é uma ação destrutiva: exige usuário admin ou owner.
-requireUser('admin');
+// Excluir é uma ação sensível: exige usuário admin ou owner.
+$currentUser = requireUser('admin');
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY
@@ -64,11 +64,13 @@ if ($conversationId === '' && $leadPhone === '' && $sourceConversationId === '')
 }
 
 // ---------------------------------------------------------------------------
-// EXCLUSÃO NO BANCO
+// EXCLUSÃO REVERSÍVEL NO BANCO
 // A cláusula WHERE filtra por id E contexto simultaneamente.
 // Se rowCount() = 0, o registro não existia ou não pertencia ao lead/conversa.
 // ---------------------------------------------------------------------------
 try {
+    requireLeadNegocioSoftDeleteColumns();
+
     $columns = array_column(getLeadNegocioColumnMeta(), 'COLUMN_NAME');
     $hasLeadPhone = in_array('lead_phone', $columns, true);
     $hasSourceContext = in_array('source_platform', $columns, true)
@@ -99,8 +101,31 @@ try {
         exit;
     }
 
+    $select = getDb()->prepare(
+        'SELECT * FROM lead_negocios WHERE id = :id AND (' . implode(' OR ', $where) . ') LIMIT 1'
+    );
+    $select->execute($params);
+    $before = $select->fetch();
+
+    if (!$before) {
+        http_response_code(404);
+        echo json_encode(['success' => false, 'message' => 'Negócio não encontrado.']);
+        exit;
+    }
+
+    if (!empty($before['deleted_at'])) {
+        echo json_encode([
+            'success' => true,
+            'message' => 'Negócio já estava excluído.',
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $params['deleted_by_user_id'] = (int) $currentUser['id'];
     $stmt = getDb()->prepare(
-        'DELETE FROM lead_negocios WHERE id = :id AND (' . implode(' OR ', $where) . ')'
+        'UPDATE lead_negocios
+         SET deleted_at = NOW(), deleted_by_user_id = :deleted_by_user_id
+         WHERE id = :id AND (' . implode(' OR ', $where) . ') AND deleted_at IS NULL'
     );
     $stmt->execute($params);
 
@@ -110,10 +135,14 @@ try {
         exit;
     }
 
+    $afterStmt = getDb()->prepare('SELECT * FROM lead_negocios WHERE id = :id LIMIT 1');
+    $afterStmt->execute(['id' => $id]);
+    logAudit($currentUser, 'negocio.delete_soft', 'lead_negocios', $id, $before, $afterStmt->fetch());
+
     echo json_encode([
         'success' => true,
-        'message' => 'Negócio excluído com sucesso.',
-    ]);
+        'message' => 'Negócio excluído e enviado para recuperação.',
+    ], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
     http_response_code(500);
     echo json_encode([

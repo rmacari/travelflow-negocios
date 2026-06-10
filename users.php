@@ -108,11 +108,19 @@ try {
             'full_name'     => $fullName,
             'role'          => $role,
         ]);
+        $newId = (int) getDb()->lastInsertId();
+        logAudit($currentUser, 'user.create', 'zap_users', $newId, null, [
+            'id' => $newId,
+            'username' => $username,
+            'full_name' => $fullName,
+            'role' => $role,
+            'is_active' => 1,
+        ]);
 
         echo json_encode([
             'success' => true,
             'message' => 'Usuário criado com sucesso.',
-            'id'      => (int) getDb()->lastInsertId(),
+            'id'      => $newId,
         ], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -134,6 +142,8 @@ try {
             $revoke->execute(['user_id' => (int) $target['id']]);
         }
 
+        logAudit($currentUser, 'user.set_status', 'zap_users', (int) $target['id'], $target, fetchUserForManagement((int) $target['id']));
+
         echo json_encode(['success' => true, 'message' => 'Status do usuário atualizado.'], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -149,6 +159,13 @@ try {
         $revoke = getDb()->prepare('UPDATE zap_user_sessions SET revoked_at = NOW() WHERE user_id = :user_id AND revoked_at IS NULL');
         $revoke->execute(['user_id' => (int) $target['id']]);
 
+        logAudit($currentUser, 'user.reset_password', 'zap_users', (int) $target['id'], $target, [
+            'id' => (int) $target['id'],
+            'username' => $target['username'],
+            'password_reset' => true,
+            'sessions_revoked' => true,
+        ]);
+
         echo json_encode(['success' => true, 'message' => 'Senha atualizada e sessões encerradas.'], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -163,6 +180,8 @@ try {
 
         $stmt = getDb()->prepare('UPDATE zap_users SET role = :role WHERE id = :id');
         $stmt->execute(['role' => $role, 'id' => (int) $target['id']]);
+
+        logAudit($currentUser, 'user.update_role', 'zap_users', (int) $target['id'], $target, fetchUserForManagement((int) $target['id']));
 
         echo json_encode(['success' => true, 'message' => 'Papel do usuário atualizado.'], JSON_UNESCAPED_UNICODE);
         exit;

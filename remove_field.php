@@ -32,7 +32,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Gerenciar campos exige usuário admin ou owner.
-requireUser('admin');
+$currentUser = requireUser('admin');
 
 // ---------------------------------------------------------------------------
 // CAMPOS PADRÃO PROTEGIDOS
@@ -41,7 +41,7 @@ requireUser('admin');
 // ---------------------------------------------------------------------------
 $protectedFields = array_merge(
     getDefaultFieldNames(),
-    ['id', 'conversation_id', 'source_platform', 'source_conversation_id', 'created_at', 'updated_at']
+    ['id', 'conversation_id', 'source_platform', 'source_conversation_id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by_user_id']
 );
 
 // ---------------------------------------------------------------------------
@@ -107,6 +107,10 @@ try {
         exit;
     }
 
+    $configBefore = $db->prepare('SELECT * FROM lead_negocio_field_config WHERE field_name = :field_name LIMIT 1');
+    $configBefore->execute(['field_name' => $fieldName]);
+    $countBefore = $db->query("SELECT COUNT(*) AS total FROM lead_negocios WHERE `{$fieldName}` IS NOT NULL AND `{$fieldName}` <> ''")->fetch();
+
     // ---------------------------------------------------------------------------
     // REMOÇÃO DA COLUNA
     // O nome já foi sanitizado por sanitizeColumnName(), tornando segura
@@ -119,6 +123,11 @@ try {
         'DELETE FROM lead_negocio_field_config WHERE field_name = :field_name'
     );
     $deleteConfig->execute(['field_name' => $fieldName]);
+
+    logAudit($currentUser, 'field.delete_hard', 'lead_negocio_field', $fieldName, [
+        'field_config' => $configBefore->fetch(),
+        'non_empty_rows' => (int) ($countBefore['total'] ?? 0),
+    ], null);
 
     echo json_encode([
         'success' => true,

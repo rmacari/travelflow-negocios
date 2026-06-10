@@ -109,6 +109,20 @@
     return apiHeaders(extra);
   }
 
+  function sendRuntimeMessageSafe(message) {
+    try {
+      if (!chrome.runtime || !chrome.runtime.id) return;
+      chrome.runtime.sendMessage(message, () => {
+        // Ignora lastError: a operação principal não deve falhar se o
+        // service worker estiver reiniciando ou se a extensão tiver sido recarregada.
+        void chrome.runtime.lastError;
+      });
+    } catch {
+      // Contexto invalidado após reload da extensão. Um refresh da página injeta
+      // o content script novo, mas não deve transformar salvamento em erro.
+    }
+  }
+
   async function fetchJson(url, options = {}, timeoutMs = 15000) {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -477,6 +491,7 @@
   function getNegociosDropdown()       { return document.getElementById('tfq-negocios-dropdown'); }
   function getFormTitle()              { return document.getElementById('tfq-form-title'); }
   function getEditingBadge()           { return document.getElementById('tfq-editing-badge'); }
+  function getRestoreBtn()             { return document.getElementById('tfq-restore'); }
 
   function setStatus(message, type) {
     const el = getStatus();
@@ -526,10 +541,8 @@
 
     const inputType = field.type === 'date'
       ? 'date'
-      : field.type === 'number'
-        ? 'number'
-        : 'text';
-    const inputMode = field.type === 'currency' ? ' inputmode="decimal"' : '';
+      : 'text';
+    const inputMode = ['currency', 'number'].includes(field.type) ? ' inputmode="decimal"' : '';
     const placeholder = field.type === 'currency' ? ' placeholder="R$ 0,00"' : '';
 
     return `
@@ -705,23 +718,44 @@
   function setEditingState(id, item) {
     editingId = id || 0;
     const deleteBtn = document.getElementById('tfq-delete');
+    const restoreBtn = getRestoreBtn();
+    const saveBtn = document.getElementById('tfq-save');
     const canDelete = isAdmin();
+    const isDeleted = Boolean(item && item.deleted_at);
 
     if (editingId > 0 && item) {
       fillForm(item);
-      if (getFormTitle())    getFormTitle().textContent    = 'Editando negócio';
-      if (getEditingBadge()) getEditingBadge().textContent = `ID #${editingId}`;
+      if (getFormTitle())    getFormTitle().textContent    = isDeleted ? 'Negócio excluído' : 'Editando negócio';
+      if (getEditingBadge()) getEditingBadge().textContent = isDeleted ? `ID #${editingId} - na lixeira` : `ID #${editingId}`;
+      if (saveBtn) {
+        saveBtn.disabled = isDeleted || !canEdit();
+        saveBtn.title = isDeleted ? 'Restaure o negócio antes de editar' : (canEdit() ? 'Salvar negócio' : 'Seu usuário não tem permissão para salvar negócios');
+      }
       if (deleteBtn) {
-        deleteBtn.disabled = !canDelete;
-        deleteBtn.title = canDelete ? 'Excluir negócio' : 'Somente administradores podem excluir negócios';
+        deleteBtn.disabled = !canDelete || isDeleted;
+        deleteBtn.title = isDeleted ? 'Negócio já está na lixeira' : (canDelete ? 'Excluir negócio' : 'Somente administradores podem excluir negócios');
+      }
+      if (restoreBtn) {
+        restoreBtn.disabled = !canDelete || !isDeleted;
+        restoreBtn.classList.toggle('tfq-hidden', !isDeleted);
+        restoreBtn.title = canDelete ? 'Restaurar negócio' : 'Somente administradores podem restaurar negócios';
       }
     } else {
       clearForm();
       if (getFormTitle())    getFormTitle().textContent    = 'Novo negócio';
       if (getEditingBadge()) getEditingBadge().textContent = '';
+      if (saveBtn) {
+        saveBtn.disabled = !canEdit();
+        saveBtn.title = canEdit() ? 'Salvar negócio' : 'Seu usuário não tem permissão para salvar negócios';
+      }
       if (deleteBtn) {
         deleteBtn.disabled = true;
         deleteBtn.title = canDelete ? 'Selecione um negócio para excluir' : 'Somente administradores podem excluir negócios';
+      }
+      if (restoreBtn) {
+        restoreBtn.disabled = true;
+        restoreBtn.classList.add('tfq-hidden');
+        restoreBtn.title = 'Selecione um negócio excluído para restaurar';
       }
     }
     markFormPristine();
@@ -793,7 +827,8 @@
 
     const options = ['<option value="">-- Novo negócio --</option>'];
     negociosCache.forEach(item => {
-      const label = `#${item.id} - ${item.destino || item.nome_lead || 'Sem destino'}`;
+      const deletedPrefix = item.deleted_at ? '[Excluído] ' : '';
+      const label = `${deletedPrefix}#${item.id} - ${item.destino || item.nome_lead || 'Sem destino'}`;
       options.push(`<option value="${item.id}">${escapeHtml(label)}</option>`);
     });
     dropdown.innerHTML = options.join('');
@@ -822,11 +857,19 @@
     }
   }
 
+  function shouldIncludeDeletedNegocios() {
+    const checkbox = document.getElementById('tfq-include-deleted');
+    return isAdmin() && Boolean(checkbox && checkbox.checked);
+  }
+
   async function fetchNegociosForContext(context) {
     const params = new URLSearchParams({
       _t: Date.now().toString()
     });
     appendLeadContextParams(params, context);
+    if (shouldIncludeDeletedNegocios()) {
+      params.set('include_deleted', '1');
+    }
 
     const result = await fetchJson(
       `${API_BASE}/get_negocios.php?${params.toString()}`,
@@ -1056,6 +1099,50 @@
 
     } catch (error) {
       setStatus(`Erro ao excluir: ${error.message}`, 'error');
+    }
+  }
+
+  async function restoreNegocio() {
+    const context = getCurrentContext();
+    const leadPhone = context.leadPhone || getFormLeadPhoneValue();
+
+    if (!isAdmin()) {
+      setStatus('Somente administradores podem restaurar negócios.', 'error');
+      return;
+    }
+    if (!editingId || !context.isValid) {
+      setStatus('Selecione um negócio excluído para restaurar.', 'error');
+      return;
+    }
+
+    const ok = window.confirm('Deseja restaurar este negócio?');
+    if (!ok) return;
+
+    try {
+      setStatus('Restaurando negócio...', '');
+
+      const result = await fetchJson(`${API_BASE}/restore_negocio.php`, {
+        method: 'POST',
+        headers: adminApiHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          id: editingId,
+          conversation_id: context.conversationId,
+          lead_phone: leadPhone,
+          source_platform: context.platform,
+          source_conversation_id: context.sourceConversationId
+        })
+      });
+
+      setEditingState(0);
+      negociosCache = [];
+      currentConversationId = '';
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await loadNegocios(true);
+
+      setStatus(result.message || 'Negócio restaurado com sucesso.', 'success');
+    } catch (error) {
+      setStatus(`Erro ao restaurar: ${error.message}`, 'error');
     }
   }
 
@@ -1498,6 +1585,119 @@
     }
   }
 
+  function setAuditStatus(message, type = '') {
+    const el = document.getElementById('tfq-audit-status');
+    if (!el) return;
+    el.textContent = message || '';
+    el.className = type ? type : '';
+  }
+
+  async function downloadBackup() {
+    if (!isAdmin()) {
+      setAuditStatus('Somente administradores podem baixar backup.', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('tfq-download-backup');
+    if (btn) btn.disabled = true;
+    setAuditStatus('Gerando backup...', '');
+
+    try {
+      const result = await fetchJson(`${API_BASE}/export_backup.php?_t=${Date.now()}`, {
+        headers: adminHeaders()
+      }, 30000);
+
+      const json = JSON.stringify(result, null, 2);
+      const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      a.href = url;
+      a.download = `zap-negocios-backup-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      setAuditStatus('Backup JSON gerado.', 'success');
+      await loadAuditLog();
+    } catch (error) {
+      setAuditStatus(`Erro: ${error.message}`, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function loadAuditLog() {
+    const listEl = document.getElementById('tfq-audit-list');
+    if (!listEl || !isAdmin()) return;
+
+    listEl.innerHTML = '<div class="tfq-empty">Carregando auditoria...</div>';
+
+    try {
+      const result = await fetchJson(`${API_BASE}/audit_log.php?limit=30&_t=${Date.now()}`, {
+        headers: adminHeaders()
+      });
+
+      renderAuditLog(Array.isArray(result.logs) ? result.logs : []);
+    } catch (error) {
+      listEl.innerHTML = `<div class="tfq-empty">Erro: ${escapeHtml(error.message)}</div>`;
+    }
+  }
+
+  function formatAuditDate(value) {
+    if (!value) return '-';
+    const date = new Date(String(value).replace(' ', 'T'));
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(date);
+  }
+
+  function actionLabel(action) {
+    return {
+      'negocio.create': 'Negócio criado',
+      'negocio.update': 'Negócio alterado',
+      'negocio.delete_soft': 'Negócio excluído',
+      'negocio.restore': 'Negócio restaurado',
+      'task.create': 'Tarefa criada',
+      'task.update': 'Tarefa alterada',
+      'task.complete': 'Tarefa concluída',
+      'task.reopen': 'Tarefa reaberta',
+      'task.cancel': 'Tarefa cancelada',
+      'task.archive': 'Tarefa arquivada',
+      'task.delete_hard': 'Tarefa excluída',
+      'field.create': 'Campo criado',
+      'field.delete_hard': 'Campo removido',
+      'field_config.update': 'Campos reordenados/configurados',
+      'user.create': 'Usuário criado',
+      'user.set_status': 'Status de usuário alterado',
+      'user.reset_password': 'Senha redefinida',
+      'user.update_role': 'Permissão alterada',
+      'backup.export': 'Backup exportado'
+    }[action] || action || '-';
+  }
+
+  function renderAuditLog(logs) {
+    const listEl = document.getElementById('tfq-audit-list');
+    if (!listEl) return;
+
+    if (logs.length === 0) {
+      listEl.innerHTML = '<div class="tfq-empty">Nenhum evento de auditoria encontrado.</div>';
+      return;
+    }
+
+    listEl.innerHTML = logs.map(log => `
+      <div class="tfq-audit-item">
+        <strong>${escapeHtml(actionLabel(log.action))}</strong>
+        <span>${escapeHtml(formatAuditDate(log.created_at))} • ${escapeHtml(log.actor_username || 'sistema')} • ${escapeHtml(log.entity_type || '-')}${log.entity_id ? ` #${escapeHtml(log.entity_id)}` : ''}</span>
+      </div>
+    `).join('');
+  }
+
   function priorityLabel(priority) {
     return {
       baixa: 'Baixa',
@@ -1874,7 +2074,7 @@
       clearTaskForm();
       await loadTasks(true);
       setTaskStatus(result.message || 'Tarefa salva.', 'success');
-      chrome.runtime.sendMessage({ type: 'TFQ_REFRESH_REMINDERS' });
+      sendRuntimeMessageSafe({ type: 'TFQ_REFRESH_REMINDERS' });
     } catch (error) {
       setTaskStatus(`Erro: ${error.message}`, 'error');
     } finally {
@@ -1919,7 +2119,7 @@
       if (editingTaskId === id) clearTaskForm();
       await loadTasks(true);
       setTaskStatus(result.message || 'Tarefa atualizada.', 'success');
-      chrome.runtime.sendMessage({ type: 'TFQ_REFRESH_REMINDERS' });
+      sendRuntimeMessageSafe({ type: 'TFQ_REFRESH_REMINDERS' });
     } catch (error) {
       setTaskStatus(`Erro: ${error.message}`, 'error');
     }
@@ -1990,6 +2190,10 @@
                 <option value="">-- Novo negócio --</option>
               </select>
             </div>
+            <label class="tfq-check-row tfq-admin-only" for="tfq-include-deleted">
+              <input id="tfq-include-deleted" type="checkbox" />
+              <span>Mostrar negócios excluídos</span>
+            </label>
             <div id="tfq-task-summary" class="tfq-task-summary"></div>
           </section>
 
@@ -2006,6 +2210,7 @@
             <div class="tfq-actions">
               <button class="tfq-btn tfq-btn-primary"   id="tfq-save"   type="button">Salvar</button>
               <button class="tfq-btn tfq-btn-danger"    id="tfq-delete" type="button" disabled>Excluir</button>
+              <button class="tfq-btn tfq-btn-secondary tfq-hidden" id="tfq-restore" type="button" disabled>Restaurar</button>
               <button class="tfq-btn tfq-btn-secondary" id="tfq-cancel" type="button">Limpar</button>
               <button class="tfq-btn tfq-btn-secondary" id="tfq-reload" type="button">Recarregar</button>
             </div>
@@ -2015,6 +2220,11 @@
 
         <!-- ABA TAREFAS -->
         <div id="tfq-tab-tarefas" class="tfq-tab-pane tfq-tab-pane-hidden">
+          <section class="tfq-card">
+            <h3>Tarefas do lead</h3>
+            <div id="tfq-tasks-list" style="margin-top:10px;"></div>
+          </section>
+
           <section class="tfq-card">
             <div class="tfq-section-head">
               <div>
@@ -2075,11 +2285,6 @@
               <button class="tfq-btn tfq-btn-secondary" id="tfq-task-reload" type="button">Recarregar</button>
             </div>
             <div id="tfq-task-status"></div>
-          </section>
-
-          <section class="tfq-card">
-            <h3>Tarefas do lead</h3>
-            <div id="tfq-tasks-list" style="margin-top:10px;"></div>
           </section>
         </div>
 
@@ -2158,6 +2363,16 @@
             <div id="tfq-users-list" style="margin-top:10px;"></div>
             <div id="tfq-users-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
           </section>
+
+          <section class="tfq-card">
+            <h3>Backup e auditoria</h3>
+            <div class="tfq-actions">
+              <button class="tfq-btn tfq-btn-primary" id="tfq-download-backup" type="button">Baixar backup JSON</button>
+              <button class="tfq-btn tfq-btn-secondary" id="tfq-reload-audit" type="button">Recarregar auditoria</button>
+            </div>
+            <div id="tfq-audit-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
+            <div id="tfq-audit-list" class="tfq-audit-list" style="margin-top:10px;"></div>
+          </section>
         </div>
 
       </div>
@@ -2179,6 +2394,7 @@
       const tabUsuarios     = panel.querySelector('.tfq-tab[data-tab="usuarios"]');
       const saveBtn         = document.getElementById('tfq-save');
       const taskSaveBtn     = document.getElementById('tfq-task-save');
+      const includeDeletedRow = document.querySelector('label[for="tfq-include-deleted"]');
 
       if (!isConfigured()) {
         if (notConfiguredEl) notConfiguredEl.classList.remove('tfq-hidden');
@@ -2225,6 +2441,9 @@
         deleteBtn.disabled = true;
         deleteBtn.title = 'Somente administradores podem excluir negócios';
       }
+      if (includeDeletedRow) {
+        includeDeletedRow.classList.toggle('tfq-hidden', !isAdmin());
+      }
 
       updateUserRoleOptions();
 
@@ -2258,7 +2477,10 @@
 
         if (target === 'campos') loadFields();
         if (target === 'tarefas') loadTasks(true);
-        if (target === 'usuarios') loadUsers();
+        if (target === 'usuarios') {
+          loadUsers();
+          loadAuditLog();
+        }
       });
     });
 
@@ -2268,13 +2490,25 @@
     const openOptionsBtn = panel.querySelector('#tfq-open-options');
     if (openOptionsBtn) {
       openOptionsBtn.addEventListener('click', () => {
-        chrome.runtime.sendMessage({ type: 'TFQ_OPEN_OPTIONS' });
+        sendRuntimeMessageSafe({ type: 'TFQ_OPEN_OPTIONS' });
       });
     }
 
     panel.querySelector('#tfq-close').addEventListener('click', closePanel);
     panel.querySelector('#tfq-save').addEventListener('click', saveNegocio);
     panel.querySelector('#tfq-delete').addEventListener('click', deleteNegocio);
+    panel.querySelector('#tfq-restore').addEventListener('click', restoreNegocio);
+    panel.querySelector('#tfq-include-deleted').addEventListener('change', () => {
+      if (!confirmDiscardChanges('Há alterações não salvas. Deseja recarregar e descartá-las?')) {
+        const checkbox = document.getElementById('tfq-include-deleted');
+        if (checkbox) checkbox.checked = !checkbox.checked;
+        return;
+      }
+      negociosCache = [];
+      currentConversationId = '';
+      setEditingState(0);
+      loadNegocios(true);
+    });
     panel.querySelector('#tfq-task-save').addEventListener('click', saveTask);
     panel.querySelector('#tfq-task-clear').addEventListener('click', () => {
       clearTaskForm();
@@ -2298,6 +2532,8 @@
 
     panel.querySelector('#tfq-add-field-btn').addEventListener('click', addField);
     panel.querySelector('#tfq-add-user-btn').addEventListener('click', addUser);
+    panel.querySelector('#tfq-download-backup').addEventListener('click', downloadBackup);
+    panel.querySelector('#tfq-reload-audit').addEventListener('click', loadAuditLog);
     panel.querySelector('#tfq-new-field-name').addEventListener('keydown', e => {
       if (e.key === 'Enter') addField();
     });

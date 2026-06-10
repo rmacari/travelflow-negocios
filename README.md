@@ -65,7 +65,10 @@ db.conf          ← você vai criar este arquivo (veja abaixo)
 get_negocios.php
 save_negocio.php
 delete_negocio.php
+restore_negocio.php
 sync_lead_identity.php
+export_backup.php
+audit_log.php
 get_fields.php
 add_field.php
 remove_field.php
@@ -83,6 +86,7 @@ migrate_v3.sql
 migrate_v4.sql
 migrate_v5.sql
 migrate_v6.sql
+migrate_v7.sql
 ```
 
 #### 2. Crie o banco de dados
@@ -93,7 +97,7 @@ Importe o `schema.sql` no seu banco MySQL:
 mysql -u seu_usuario -p seu_banco < schema.sql
 ```
 
-Se já tiver o banco instalado de uma versão anterior, use as migrações necessárias em ordem (`migrate_v2.sql`, `migrate_v3.sql`, `migrate_v4.sql`, `migrate_v5.sql` e `migrate_v6.sql`) em vez do `schema.sql`. Leia os comentários dos arquivos antes de executar.
+Se já tiver o banco instalado de uma versão anterior, use as migrações necessárias em ordem (`migrate_v2.sql`, `migrate_v3.sql`, `migrate_v4.sql`, `migrate_v5.sql`, `migrate_v6.sql` e `migrate_v7.sql`) em vez do `schema.sql`. Leia os comentários dos arquivos antes de executar.
 
 #### 3. Crie o arquivo db.conf
 
@@ -193,6 +197,7 @@ Clique em **Entrar** e depois em **Testar sessão**.
 | `migrate_v4.sql` | Adiciona telefone, plataforma de origem e suporte universal CRM/WhatsApp |
 | `migrate_v5.sql` | Adiciona usuários, sessões e permissões |
 | `migrate_v6.sql` | Adiciona tarefas, lembretes e notificações |
+| `migrate_v7.sql` | Adiciona auditoria, backup/exportação e exclusão reversível de negócios |
 | `db.conf.example` | Modelo do arquivo de configuração |
 | `db.php` | Conexão PDO, CORS, autenticação, permissões e sanitização de colunas |
 | `login.php` | Autentica usuário e cria sessão |
@@ -204,8 +209,11 @@ Clique em **Entrar** e depois em **Testar sessão**.
 | `get_negocios.php` | Lista negócios por `conversation_id`, telefone ou conversa de origem |
 | `get_form_fields.php` | Lista campos do formulário com ordem, rótulo, tipo e opções |
 | `save_negocio.php` | Cria ou atualiza um negócio *(requer editor, admin ou owner)* |
-| `delete_negocio.php` | Exclui um negócio por ID *(requer admin ou owner)* |
+| `delete_negocio.php` | Move um negócio para a lixeira por ID *(requer admin ou owner)* |
+| `restore_negocio.php` | Restaura um negócio excluído da lixeira *(requer admin ou owner)* |
 | `sync_lead_identity.php` | Preenche automaticamente o telefone normalizado em negócios antigos do lead *(requer editor, admin ou owner)* |
+| `export_backup.php` | Gera backup JSON dos dados operacionais, sem hashes de senha/sessão *(requer admin ou owner)* |
+| `audit_log.php` | Lista eventos recentes de auditoria *(requer admin ou owner)* |
 | `get_fields.php` | Lista campos e metadados administrativos *(requer admin ou owner)* |
 | `save_field_config.php` | Salva ordem, rótulo, tipo e opções dos campos *(requer admin ou owner)* |
 | `add_field.php` | Adiciona nova coluna e sua configuração visual *(requer admin ou owner)* |
@@ -261,6 +269,8 @@ Também há a tabela `lead_negocio_field_config`, usada para salvar no servidor 
 
 A tabela `lead_tasks` armazena tarefas vinculadas ao lead, com título, observação, vencimento, prioridade, status, responsável e vínculo opcional com um negócio.
 
+A tabela `zap_audit_log` registra ações sensíveis, como criação/edição/exclusão/restauração de negócios, alterações de tarefas, usuários, campos e exportação de backup.
+
 O sistema de permissões usa `zap_users` e `zap_user_sessions`:
 
 | Papel | Permissões |
@@ -283,6 +293,7 @@ O sistema de permissões usa `zap_users` e `zap_user_sessions`:
 - Use os campos de acompanhamento, como status, temperatura, próximo contato, valor estimado e responsável, para controlar melhor cada oportunidade
 - Preencha os campos e clique **Salvar**
 - Use **Excluir** para remover o negócio selecionado; esta ação exige usuário `admin` ou `owner` e pede confirmação
+- Para `admin` e `owner`, a opção **Mostrar negócios excluídos** exibe itens na lixeira e permite usar **Restaurar**
 - Use **Limpar** para voltar ao modo de criação
 - Use **Recarregar** para buscar os dados atualizados do servidor
 - Ao trocar, limpar ou recarregar com alterações não salvas, a extensão avisa antes de descartar o formulário
@@ -310,6 +321,7 @@ O sistema de permissões usa `zap_users` e `zap_user_sessions`:
 - Visível apenas para usuários `admin` e `owner`
 - Admins podem criar, desativar e redefinir senha de usuários `viewer` e `editor`
 - Owners podem gerenciar todos os papéis
+- A seção **Backup e auditoria** permite baixar um backup JSON e consultar eventos recentes
 
 ---
 
@@ -325,6 +337,9 @@ O sistema de permissões usa `zap_users` e `zap_user_sessions`:
 - As comparações de chaves usam `hash_equals()` para evitar ataques de timing
 - Nomes de colunas são sanitizados antes de qualquer `ALTER TABLE`
 - Campos padrão do sistema não podem ser removidos via API
+- Negócios são excluídos de forma reversível e podem ser restaurados por `admin` ou `owner`
+- A auditoria registra ações sensíveis com usuário, data/hora, entidade e antes/depois quando aplicável
+- O backup/exportação gera JSON operacional sem expor hashes de senha ou sessão
 - O CORS aceita apenas a origem definida em `db.conf`
 - Para usar Travel Flow CRM e WhatsApp Web ao mesmo tempo, `ALLOWED_ORIGIN` deve incluir `https://travelflow.tur.br,https://web.whatsapp.com`
 

@@ -110,6 +110,10 @@ CREATE TABLE IF NOT EXISTS lead_negocios (
     -- Data e hora da última atualização (atualizado automaticamente no UPDATE)
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
+    -- Exclusão reversível: negócio removido fica recuperável
+    deleted_at DATETIME NULL DEFAULT NULL,
+    deleted_by_user_id BIGINT UNSIGNED NULL DEFAULT NULL,
+
     -- -------------------------------------------------------------------------
     -- ÍNDICES
     -- -------------------------------------------------------------------------
@@ -126,7 +130,10 @@ CREATE TABLE IF NOT EXISTS lead_negocios (
     KEY idx_source_context (source_platform, source_conversation_id),
 
     -- Índice composto para ordenação por data de atualização por atendimento
-    KEY idx_conversation_updated (conversation_id, updated_at)
+    KEY idx_conversation_updated (conversation_id, updated_at),
+
+    -- Índice para ocultar/restaurar negócios excluídos logicamente
+    KEY idx_lead_negocios_deleted (deleted_at)
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -169,6 +176,34 @@ CREATE TABLE IF NOT EXISTS zap_users (
     PRIMARY KEY (id),
     UNIQUE KEY uq_zap_users_username (username),
     KEY idx_zap_users_role_active (role, is_active)
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS zap_audit_log (
+
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    actor_user_id BIGINT UNSIGNED NULL DEFAULT NULL,
+    actor_username VARCHAR(80) NOT NULL DEFAULT '',
+    actor_role VARCHAR(20) NOT NULL DEFAULT '',
+    action VARCHAR(80) NOT NULL,
+    entity_type VARCHAR(80) NOT NULL,
+    entity_id VARCHAR(80) NOT NULL DEFAULT '',
+    before_data LONGTEXT NULL,
+    after_data LONGTEXT NULL,
+    ip_address VARCHAR(45) NOT NULL DEFAULT '',
+    user_agent VARCHAR(255) NOT NULL DEFAULT '',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (id),
+    KEY idx_zap_audit_actor (actor_user_id),
+    KEY idx_zap_audit_action (action),
+    KEY idx_zap_audit_entity (entity_type, entity_id),
+    KEY idx_zap_audit_created (created_at),
+
+    CONSTRAINT fk_zap_audit_actor
+        FOREIGN KEY (actor_user_id)
+        REFERENCES zap_users (id)
+        ON DELETE SET NULL
 
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

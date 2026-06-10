@@ -349,6 +349,88 @@ function canManageTargetUser($actor, $targetRole, $targetUserId = 0)
     return false;
 }
 
+function encodeAuditData($data)
+{
+    if ($data === null) {
+        return null;
+    }
+
+    return json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getClientIpAddress()
+{
+    return substr((string) ($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45);
+}
+
+function getClientUserAgent()
+{
+    return substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
+}
+
+function logAudit($actor, $action, $entityType, $entityId = '', $beforeData = null, $afterData = null)
+{
+    try {
+        if (!tableExists('zap_audit_log')) {
+            return;
+        }
+
+        $stmt = getDb()->prepare("
+            INSERT INTO zap_audit_log (
+                actor_user_id,
+                actor_username,
+                actor_role,
+                action,
+                entity_type,
+                entity_id,
+                before_data,
+                after_data,
+                ip_address,
+                user_agent
+            ) VALUES (
+                :actor_user_id,
+                :actor_username,
+                :actor_role,
+                :action,
+                :entity_type,
+                :entity_id,
+                :before_data,
+                :after_data,
+                :ip_address,
+                :user_agent
+            )
+        ");
+
+        $stmt->execute([
+            'actor_user_id'  => isset($actor['id']) ? (int) $actor['id'] : null,
+            'actor_username' => substr((string) ($actor['username'] ?? ''), 0, 80),
+            'actor_role'     => substr((string) ($actor['role'] ?? ''), 0, 20),
+            'action'         => substr((string) $action, 0, 80),
+            'entity_type'    => substr((string) $entityType, 0, 80),
+            'entity_id'      => substr((string) $entityId, 0, 80),
+            'before_data'    => encodeAuditData($beforeData),
+            'after_data'     => encodeAuditData($afterData),
+            'ip_address'     => getClientIpAddress(),
+            'user_agent'     => getClientUserAgent(),
+        ]);
+    } catch (Throwable $e) {
+        // Auditoria não deve derrubar a operação principal.
+    }
+}
+
+function requireLeadNegocioSoftDeleteColumns()
+{
+    $columns = array_column(getLeadNegocioColumnMeta(), 'COLUMN_NAME');
+    if (!in_array('deleted_at', $columns, true) || !in_array('deleted_by_user_id', $columns, true)) {
+        http_response_code(503);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Execute migrate_v7.sql no servidor para ativar auditoria e exclusão reversível.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+}
+
 function getDefaultFieldMeta()
 {
     return [
@@ -521,7 +603,7 @@ function ensureFieldConfigRows($columns)
         $name = $column['COLUMN_NAME'];
         if (
             !preg_match('/^[a-z][a-z0-9_]{1,63}$/', $name)
-            || in_array($name, ['conversation_id', 'source_platform', 'source_conversation_id'], true)
+            || in_array($name, ['conversation_id', 'source_platform', 'source_conversation_id', 'deleted_at', 'deleted_by_user_id'], true)
         ) {
             continue;
         }
@@ -544,7 +626,7 @@ function getFieldDefinitions()
     $columns = getLeadNegocioColumnMeta();
     ensureFieldConfigRows($columns);
 
-    $systemColumns = ['id', 'conversation_id', 'source_platform', 'source_conversation_id', 'created_at', 'updated_at'];
+    $systemColumns = ['id', 'conversation_id', 'source_platform', 'source_conversation_id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by_user_id'];
     $defaultMeta = getDefaultFieldMeta();
     $columnByName = [];
 
@@ -618,7 +700,7 @@ function getLeadNegocioFields()
     ");
     $stmt->execute(['db_name' => $dbName]);
 
-    $systemColumns = ['id', 'created_at', 'updated_at'];
+    $systemColumns = ['id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by_user_id'];
     $fields = [];
 
     foreach ($stmt->fetchAll() as $column) {
@@ -655,7 +737,7 @@ function sanitizeColumnName($name)
         'having', 'limit', 'offset', 'and', 'or', 'not', 'null', 'true',
         'false', 'int', 'varchar', 'text', 'timestamp', 'primary', 'key',
         'id', 'conversation_id', 'source_platform', 'source_conversation_id',
-        'created_at', 'updated_at'
+        'created_at', 'updated_at', 'deleted_at', 'deleted_by_user_id'
     ];
 
     $name = strtolower(trim($name));

@@ -16,7 +16,7 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-requireUser('admin');
+$currentUser = requireUser('admin');
 
 $raw  = file_get_contents('php://input');
 $data = json_decode($raw, true);
@@ -101,6 +101,7 @@ try {
         'message' => 'Configuração dos campos salva com sucesso.',
         'fields'  => $saved,
     ], JSON_UNESCAPED_UNICODE);
+    logAudit($currentUser, 'field_config.update', 'lead_negocio_field_config', 'form_fields', $currentFields, $saved);
 } catch (Throwable $e) {
     http_response_code(500);
     echo json_encode([

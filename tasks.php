@@ -165,6 +165,13 @@ function fetchTaskForContext($id, $context)
     return $task;
 }
 
+function fetchTaskById($id)
+{
+    $stmt = getDb()->prepare('SELECT * FROM lead_tasks WHERE id = :id LIMIT 1');
+    $stmt->execute(['id' => (int) $id]);
+    return $stmt->fetch();
+}
+
 function ensureNegocioBelongsToContext($negocioId, $context)
 {
     $negocioId = (int) $negocioId;
@@ -344,11 +351,13 @@ try {
                 'created_by_user_id' => (int) $currentUser['id'],
                 'updated_by_user_id' => (int) $currentUser['id'],
             ]);
+            $newId = (int) $db->lastInsertId();
+            logAudit($currentUser, 'task.create', 'lead_tasks', $newId, null, fetchTaskById($newId));
 
             echo json_encode([
                 'success' => true,
                 'message' => 'Tarefa criada com sucesso.',
-                'id' => (int) $db->lastInsertId(),
+                'id' => $newId,
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
@@ -360,7 +369,7 @@ try {
             exit;
         }
 
-        fetchTaskForContext($id, $context);
+        $before = fetchTaskForContext($id, $context);
 
         $stmt = $db->prepare("
             UPDATE lead_tasks
@@ -388,6 +397,7 @@ try {
             'updated_by_user_id' => (int) $currentUser['id'],
             'id' => $id,
         ]);
+        logAudit($currentUser, 'task.update', 'lead_tasks', $id, $before, fetchTaskById($id));
 
         echo json_encode([
             'success' => true,
@@ -404,7 +414,7 @@ try {
         exit;
     }
 
-    fetchTaskForContext($id, $context);
+    $before = fetchTaskForContext($id, $context);
 
     if ($action === 'complete') {
         $stmt = $db->prepare("
@@ -417,6 +427,7 @@ try {
             WHERE id = :id
         ");
         $stmt->execute(['user_id' => (int) $currentUser['id'], 'id' => $id]);
+        logAudit($currentUser, 'task.complete', 'lead_tasks', $id, $before, fetchTaskById($id));
         echo json_encode(['success' => true, 'message' => 'Tarefa concluída.'], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -432,6 +443,7 @@ try {
             WHERE id = :id
         ");
         $stmt->execute(['user_id' => (int) $currentUser['id'], 'id' => $id]);
+        logAudit($currentUser, 'task.reopen', 'lead_tasks', $id, $before, fetchTaskById($id));
         echo json_encode(['success' => true, 'message' => 'Tarefa reaberta.'], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -447,6 +459,7 @@ try {
             WHERE id = :id
         ");
         $stmt->execute(['user_id' => (int) $currentUser['id'], 'id' => $id]);
+        logAudit($currentUser, 'task.cancel', 'lead_tasks', $id, $before, fetchTaskById($id));
         echo json_encode(['success' => true, 'message' => 'Tarefa cancelada.'], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -460,6 +473,7 @@ try {
             WHERE id = :id
         ");
         $stmt->execute(['user_id' => (int) $currentUser['id'], 'id' => $id]);
+        logAudit($currentUser, 'task.archive', 'lead_tasks', $id, $before, fetchTaskById($id));
         echo json_encode(['success' => true, 'message' => 'Tarefa arquivada.'], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -467,6 +481,7 @@ try {
     if ($action === 'delete') {
         $stmt = $db->prepare('DELETE FROM lead_tasks WHERE id = :id');
         $stmt->execute(['id' => $id]);
+        logAudit($currentUser, 'task.delete_hard', 'lead_tasks', $id, $before, null);
         echo json_encode(['success' => true, 'message' => 'Tarefa excluída permanentemente.'], JSON_UNESCAPED_UNICODE);
         exit;
     }

@@ -43,6 +43,7 @@ try {
     $hasSourceContext = in_array('source_platform', $columns, true)
         && in_array('source_conversation_id', $columns, true);
     $hasLeadName = in_array('nome_lead', $columns, true);
+    $hasDeletedAt = in_array('deleted_at', $columns, true);
 
     if (!$hasLeadPhone) {
         http_response_code(422);
@@ -97,6 +98,7 @@ try {
         SET " . implode(",\n            ", $assignments) . "
         WHERE (" . implode(' OR ', $where) . ")
           AND lead_phone = ''
+          " . ($hasDeletedAt ? "AND deleted_at IS NULL" : "") . "
     ");
     $stmt->execute($params);
 

@@ -18,21 +18,29 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-requireUser('viewer');
+$currentUser = requireUser('viewer');
 
 $conversationId       = trim($_GET['conversation_id'] ?? '');
 $leadPhone            = normalizeLeadPhone($_GET['lead_phone'] ?? '');
 $leadName             = trim($_GET['lead_name'] ?? '');
 $sourcePlatform       = normalizeSourcePlatform($_GET['source_platform'] ?? '');
 $sourceConversationId = trim($_GET['source_conversation_id'] ?? '');
+$includeDeleted       = !empty($_GET['include_deleted']);
 
 $where  = [];
 $params = [];
 $columns = array_column(getLeadNegocioColumnMeta(), 'COLUMN_NAME');
 $hasLeadPhone = in_array('lead_phone', $columns, true);
 $hasLeadName = in_array('nome_lead', $columns, true);
+$hasDeletedAt = in_array('deleted_at', $columns, true);
 $hasSourceContext = in_array('source_platform', $columns, true)
     && in_array('source_conversation_id', $columns, true);
+
+if ($includeDeleted && !userHasRole($currentUser, 'admin')) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'message' => 'Somente administradores podem listar negócios excluídos.'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 if ($conversationId !== '') {
     $where[] = 'conversation_id = :conversation_id';
@@ -65,10 +73,12 @@ if (empty($where)) {
 }
 
 try {
+    $deletedFilter = ($hasDeletedAt && !$includeDeleted) ? ' AND deleted_at IS NULL' : '';
     $stmt = getDb()->prepare("
         SELECT *
         FROM lead_negocios
-        WHERE " . implode(' OR ', $where) . "
+        WHERE (" . implode(' OR ', $where) . ")
+        {$deletedFilter}
         ORDER BY id DESC
     ");
 
