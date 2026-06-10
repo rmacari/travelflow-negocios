@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negócios — add_field.php
+ * Zap Negócios — add_field.php
  * =============================================================================
  * Endpoint da API para adição de um novo campo (coluna) na tabela lead_negocios.
  *
@@ -19,7 +19,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negócios
+ * Projeto: Zap Negócios
  * =============================================================================
  */
 

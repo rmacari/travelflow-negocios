@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * Travel Flow Negócios — page-bridge.js
+ * Zap Negócios — page-bridge.js
  * =============================================================================
  * Script de detecção de mudança de atendimento no Travel Flow CRM.
  *
@@ -26,7 +26,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negócios
+ * Projeto: Zap Negócios
  * =============================================================================
  */
 

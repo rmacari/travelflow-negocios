@@ -1,8 +1,8 @@
-# Travel Flow Negócios
+# Zap Negócios
 
 Desenvolvido por **Ricardo Macari** — contato: macari@gmail.com
 
-Extensão Chrome + backend PHP + MySQL para salvar e gerenciar múltiplos negócios de leads diretamente no Travel Flow CRM, vinculados ao `conversationId` da URL do atendimento.
+Extensão Chrome + backend PHP + MySQL para salvar e gerenciar múltiplos negócios de leads no Travel Flow CRM e no WhatsApp Web, usando `conversationId`, telefone do lead e origem da conversa como identificadores.
 
 ---
 
@@ -25,19 +25,19 @@ Para quem instala a extensão pela loja e já tem acesso a um servidor com o bac
 
 ### Passo 1 — Instale a extensão
 
-Acesse a [Chrome Web Store](https://chrome.google.com/webstore) e instale **Travel Flow Negócios**.
+Acesse a [Chrome Web Store](https://chrome.google.com/webstore) e instale **Zap Negócios**.
 
 ### Passo 2 — Abra as configurações
 
 Após instalar, clique com o **botão direito** no ícone da extensão na barra do Chrome e selecione **"Opções"**.
 
-Ou acesse: `chrome://extensions` → Travel Flow Negócios → **Detalhes** → **Opções de extensão**
+Ou acesse: `chrome://extensions` → Zap Negócios → **Detalhes** → **Opções de extensão**
 
 ### Passo 3 — Configure a conexão
 
 Na página de Opções, preencha:
 
-- **URL do servidor** — endereço completo da pasta do backend no servidor, ex: `https://seudominio.com/travelflow-negocios`
+- **URL do servidor** — endereço completo da pasta do backend no servidor, ex: `https://seudominio.com/zap-negocios`
 - **API Key** — chave fornecida pelo administrador do servidor
 - **Admin Key** — *(opcional)* chave de administrador, fornecida apenas para quem pode gerenciar campos
 
@@ -45,7 +45,7 @@ Clique em **Salvar configurações** e depois em **Testar conexão** para confir
 
 ### Passo 4 — Pronto
 
-Acesse um atendimento no Travel Flow CRM. O botão **Negócios** aparecerá no lado direito da tela. O clique no ícone da extensão também abre/fecha o painel quando você está em uma conversa do CRM.
+Acesse um atendimento no Travel Flow CRM ou uma conversa no WhatsApp Web. O botão **Negócios** aparecerá no lado direito da tela. O clique no ícone da extensão também abre/fecha o painel nos dois sistemas.
 
 ---
 
@@ -57,7 +57,7 @@ Para quem quer instalar e hospedar o backend no próprio servidor e carregar a e
 
 #### 1. Suba os arquivos para o servidor
 
-Crie uma pasta no servidor, por exemplo `/httpdocs/travelflow-negocios/`, e envie os seguintes arquivos:
+Crie uma pasta no servidor, por exemplo `/httpdocs/zap-negocios/`, e envie os seguintes arquivos:
 
 ```
 db.php
@@ -73,6 +73,7 @@ save_field_config.php
 schema.sql
 migrate_v2.sql
 migrate_v3.sql
+migrate_v4.sql
 ```
 
 #### 2. Crie o banco de dados
@@ -83,7 +84,7 @@ Importe o `schema.sql` no seu banco MySQL:
 mysql -u seu_usuario -p seu_banco < schema.sql
 ```
 
-Se já tiver o banco instalado de uma versão anterior, use `migrate_v2.sql` e depois `migrate_v3.sql` em vez do `schema.sql`. Leia os comentários dos arquivos antes de executar.
+Se já tiver o banco instalado de uma versão anterior, use as migrações necessárias em ordem (`migrate_v2.sql`, `migrate_v3.sql` e `migrate_v4.sql`) em vez do `schema.sql`. Leia os comentários dos arquivos antes de executar.
 
 #### 3. Crie o arquivo db.conf
 
@@ -94,7 +95,7 @@ DB_HOST=localhost
 DB_NAME=seu_banco
 DB_USER=seu_usuario
 DB_PASS=sua_senha
-ALLOWED_ORIGIN=https://travelflow.tur.br
+ALLOWED_ORIGIN=https://travelflow.tur.br,https://web.whatsapp.com
 API_KEY=chave_para_todos_os_usuarios
 ADMIN_KEY=chave_somente_para_administradores
 ```
@@ -118,7 +119,7 @@ Use cURL para confirmar que o backend responde com a API Key:
 
 ```bash
 curl -H "X-Api-Key: sua_api_key" \
-  "https://seudominio.com/travelflow-negocios/get_negocios.php?conversation_id=teste"
+  "https://seudominio.com/zap-negocios/get_negocios.php?conversation_id=teste"
 ```
 
 Deve retornar: `{"success":true,"data":[]}`
@@ -127,7 +128,7 @@ Para testar os endpoints de gerenciamento de campos, use Postman ou cURL com o h
 
 ```bash
 curl -H "X-Admin-Key: sua_admin_key" \
-  https://seudominio.com/travelflow-negocios/get_fields.php
+  https://seudominio.com/zap-negocios/get_fields.php
 ```
 
 ---
@@ -136,7 +137,7 @@ curl -H "X-Admin-Key: sua_admin_key" \
 
 #### 1. Baixe os arquivos da extensão
 
-Faça o download ou clone o repositório em [github.com/rmacari/travelflow-negocios](https://github.com/rmacari/travelflow-negocios) e localize a pasta com os arquivos:
+Faça o download ou clone o repositório em [github.com/rmacari/zap-negocios](https://github.com/rmacari/zap-negocios) e localize a pasta com os arquivos:
 
 ```
 manifest.json
@@ -177,9 +178,10 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 | `schema.sql` | Cria a tabela `lead_negocios` do zero |
 | `migrate_v2.sql` | Migra banco existente de versão anterior para v2 |
 | `migrate_v3.sql` | Adiciona campos de acompanhamento e a tabela de configuração de campos |
+| `migrate_v4.sql` | Adiciona telefone, plataforma de origem e suporte universal CRM/WhatsApp |
 | `db.conf.example` | Modelo do arquivo de configuração |
 | `db.php` | Conexão PDO, CORS, validação de API Key e sanitização de colunas |
-| `get_negocios.php` | Lista todos os negócios de um `conversation_id` |
+| `get_negocios.php` | Lista negócios por `conversation_id`, telefone ou conversa de origem |
 | `get_form_fields.php` | Lista campos do formulário com ordem, rótulo, tipo e opções *(requer X-Api-Key)* |
 | `save_negocio.php` | Cria ou atualiza um negócio |
 | `delete_negocio.php` | Exclui um negócio por ID |
@@ -197,8 +199,8 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 | `options.html` | Página de configuração (URL do servidor e API Key) |
 | `options.js` | Lógica de salvar/carregar configurações via chrome.storage.sync |
 | `options.css` | Estilos da página de configuração |
-| `page-bridge.js` | Detecta mudanças de `conversationId` no CRM |
-| `content.js` | Painel lateral: negócios, formulário e configuração de campos |
+| `page-bridge.js` | Detecta mudanças de `conversationId` no Travel Flow CRM |
+| `content.js` | Painel lateral universal: negócios, formulário e configuração de campos |
 | `content.css` | Estilos do painel lateral |
 
 ---
@@ -208,8 +210,11 @@ Clique em **Salvar configurações** e depois em **Testar conexão**.
 | Coluna | Tipo | Descrição |
 |---|---|---|
 | `id` | BIGINT | Chave primária, auto increment |
-| `conversation_id` | VARCHAR(191) | ID do atendimento no Travel Flow |
+| `conversation_id` | VARCHAR(191) | ID do atendimento no Travel Flow, mantido por compatibilidade |
+| `source_platform` | VARCHAR(50) | Origem do lead, como `travel_flow` ou `whatsapp_web` |
+| `source_conversation_id` | VARCHAR(191) | Identificador da conversa na plataforma de origem |
 | `nome_lead` | VARCHAR(255) | Nome do lead (lido automaticamente do DOM) |
+| `lead_phone` | VARCHAR(32) | Telefone normalizado do lead, usado como identificador universal |
 | `email` | VARCHAR(255) | E-mail do lead |
 | `destino` | VARCHAR(255) | Destino da viagem |
 | `status_negocio` | VARCHAR(100) | Status comercial do negócio |
@@ -240,7 +245,8 @@ Também há a tabela `lead_negocio_field_config`, usada para salvar no servidor 
 ### Aba 📋 Negócios
 
 - Selecione um negócio existente no dropdown ou mantenha **Novo negócio**
-- O campo **Nome do Lead** é preenchido automaticamente da página
+- O campo **Nome do Lead** é preenchido automaticamente quando a página fornece essa informação
+- O campo **Telefone do Lead** é capturado automaticamente quando o telefone está visível; no WhatsApp Web, se o contato salvo mostrar apenas nome, preencha o telefone manualmente e clique em **Recarregar** para buscar pela base universal
 - Use os campos de acompanhamento, como status, temperatura, próximo contato, valor estimado e responsável, para controlar melhor cada oportunidade
 - Preencha os campos e clique **Salvar**
 - Use **Excluir** para remover o negócio selecionado (pede confirmação)
@@ -270,6 +276,7 @@ Também há a tabela `lead_negocio_field_config`, usada para salvar no servidor 
 - Nomes de colunas são sanitizados antes de qualquer `ALTER TABLE`
 - Campos padrão do sistema não podem ser removidos via API
 - O CORS aceita apenas a origem definida em `db.conf`
+- Para usar Travel Flow CRM e WhatsApp Web ao mesmo tempo, `ALLOWED_ORIGIN` deve incluir `https://travelflow.tur.br,https://web.whatsapp.com`
 
 ---
 
@@ -292,4 +299,4 @@ Para dúvidas sobre instalação ou funcionamento, verifique:
 3. Se a tabela foi criada corretamente no banco
 4. Se a URL e a API Key nas Opções da extensão estão corretas
 5. Se o console do navegador (F12) mostra erros de CORS ou conexão
-6. Se o `conversationId` está presente na URL do atendimento
+6. Se o `conversationId` está presente no atendimento do CRM ou se uma conversa está aberta no WhatsApp Web

@@ -1,5 +1,5 @@
 -- =============================================================================
--- Travel Flow Negócios — migrate_v2.sql
+-- Zap Negócios — migrate_v2.sql
 -- =============================================================================
 -- Script de migração para quem já possui a tabela lead_negocios criada
 -- e precisa adicionar os novos campos da versão 2.
@@ -9,7 +9,7 @@
 --
 -- Autor:   Ricardo Macari
 -- Contato: macari@gmail.com
--- Projeto: Travel Flow Negócios
+-- Projeto: Zap Negócios
 -- =============================================================================
 
 -- Adiciona o campo nome do lead (lido automaticamente do DOM)

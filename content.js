@@ -1,15 +1,15 @@
 /**
  * =============================================================================
- * Travel Flow Negócios — content.js
+ * Zap Negócios — content.js
  * =============================================================================
- * Extensão Chrome para o Travel Flow CRM (travelflow.tur.br)
+ * Extensão Chrome para Travel Flow CRM e WhatsApp Web.
  *
  * Injeta um painel lateral na página de atendimento que permite ao operador
  * criar, visualizar, editar e excluir múltiplos negócios vinculados a um lead,
- * usando o conversationId presente na URL como chave de vínculo.
+ * usando conversationId, telefone do lead e origem da conversa como vínculos.
  *
- * O campo Nome do Lead é preenchido automaticamente a partir do elemento
- * h3.font-semibold:not(.truncate) presente no DOM da página de atendimento.
+ * O campo Nome do Lead é preenchido automaticamente a partir do DOM do CRM
+ * ou do cabeçalho da conversa no WhatsApp Web.
  *
  * API_BASE e API_KEY são carregados do chrome.storage.sync, configurados
  * pelo usuário na página de Opções da extensão. Se não configurados,
@@ -36,7 +36,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negócios
+ * Projeto: Zap Negócios
  * =============================================================================
  */
 (function () {
@@ -44,6 +44,8 @@
   const PANEL_ID           = 'tfq-panel';
   const TOGGLE_ID          = 'tfq-toggle';
   const LEAD_NAME_SELECTOR = 'h3.font-semibold:not(.truncate)';
+  const TRAVEL_FLOW_HOST   = 'travelflow.tur.br';
+  const WHATSAPP_HOST      = 'web.whatsapp.com';
 
   let API_BASE  = '';
   let API_KEY   = '';
@@ -131,6 +133,7 @@
 
   const defaultFields = [
     { key: 'nome_lead',        label: 'Nome do Lead',               type: 'text',     auto: true },
+    { key: 'lead_phone',       label: 'Telefone do Lead',           type: 'text',     auto: true },
     { key: 'email',            label: 'Email',                      type: 'text' },
     { key: 'destino',          label: 'Destino',                    type: 'text' },
     {
@@ -187,22 +190,185 @@
   let lastCheckedConversationId = '';
   let observerDebounceTimer     = null;
 
-  function isAtendimentoPage() {
+  function getPlatform() {
+    const host = window.location.hostname;
     const pathname = window.location.pathname;
-    return pathname.includes('/atendimento-web') || pathname === '/atendimento-web';
+
+    if (host === TRAVEL_FLOW_HOST && (pathname.includes('/atendimento-web') || pathname === '/atendimento-web')) {
+      return 'travel_flow';
+    }
+    if (host === WHATSAPP_HOST) {
+      return 'whatsapp_web';
+    }
+
+    return '';
   }
 
-  function getConversationId() {
+  function normalizePhone(value) {
+    return String(value || '').replace(/\D+/g, '');
+  }
+
+  function simpleHash(value) {
+    let hash = 0;
+    const text = String(value || '');
+    for (let i = 0; i < text.length; i++) {
+      hash = ((hash << 5) - hash) + text.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash).toString(36);
+  }
+
+  function getTravelFlowConversationId() {
     return new URL(window.location.href).searchParams.get('conversationId') || '';
   }
 
-  function hasValidConversation() {
-    return isAtendimentoPage() && getConversationId() !== '';
+  function getWhatsAppHeaderText() {
+    const header = document.querySelector('#main header');
+    if (!header) return '';
+
+    const titled = header.querySelector('span[title], div[title]');
+    if (titled && titled.getAttribute('title')) {
+      return titled.getAttribute('title').trim();
+    }
+
+    const auto = header.querySelector('[dir="auto"]');
+    return auto ? auto.textContent.trim() : '';
+  }
+
+  function extractPhoneFromText(text) {
+    const match = String(text || '').match(/(?:\+?\d[\d\s().-]{7,}\d)/);
+    return match ? normalizePhone(match[0]) : '';
+  }
+
+  function extractPhoneFromHref(href) {
+    try {
+      return extractPhoneFromText(decodeURIComponent(String(href || '')));
+    } catch {
+      return extractPhoneFromText(href);
+    }
+  }
+
+  function getTravelFlowLeadPhoneFromDom() {
+    const phoneLinks = document.querySelectorAll(
+      'a[href^="tel:"], a[href*="wa.me/"], a[href*="api.whatsapp.com"], a[href*="web.whatsapp.com/send"]'
+    );
+
+    for (const link of phoneLinks) {
+      const phone = extractPhoneFromHref(link.getAttribute('href'));
+      if (phone) return phone;
+    }
+
+    const controls = document.querySelectorAll('input, textarea');
+    for (const control of controls) {
+      const hint = [
+        control.name,
+        control.id,
+        control.placeholder,
+        control.getAttribute('aria-label')
+      ].join(' ');
+      if (!/telefone|celular|whats|phone|tel/i.test(hint)) continue;
+
+      const phone = extractPhoneFromText(control.value);
+      if (phone) return phone;
+    }
+
+    const labeledElements = document.querySelectorAll('label, span, p, div');
+    let checked = 0;
+    for (const element of labeledElements) {
+      const text = (element.textContent || '').trim();
+      if (text.length > 300 || !/telefone|celular|whats|phone|tel/i.test(text)) continue;
+
+      const container = element.closest('div') || element.parentElement || element;
+      const containerText = (container.textContent || '').trim();
+      const phone = extractPhoneFromText(containerText.length <= 600 ? containerText : text);
+      if (phone) return phone;
+
+      checked++;
+      if (checked >= 40) break;
+    }
+
+    return '';
+  }
+
+  function getLeadPhoneFromDom() {
+    const platform = getPlatform();
+
+    if (platform === 'whatsapp_web') {
+      const headerText = getWhatsAppHeaderText();
+      const headerPhone = extractPhoneFromText(headerText);
+      if (headerPhone) return headerPhone;
+      return '';
+    }
+
+    if (platform === 'travel_flow') {
+      return getTravelFlowLeadPhoneFromDom();
+    }
+
+    return '';
   }
 
   function getLeadNameFromDom() {
+    const platform = getPlatform();
+
+    if (platform === 'whatsapp_web') {
+      const text = getWhatsAppHeaderText();
+      return text;
+    }
+
     const el = document.querySelector(LEAD_NAME_SELECTOR);
     return el ? el.textContent.trim() : '';
+  }
+
+  function getCurrentContext() {
+    const platform = getPlatform();
+    const leadName = getLeadNameFromDom();
+    const leadPhone = getLeadPhoneFromDom();
+
+    if (platform === 'travel_flow') {
+      const conversationId = getTravelFlowConversationId();
+      return {
+        platform,
+        conversationId,
+        sourceConversationId: conversationId,
+        leadName,
+        leadPhone,
+        isValid: conversationId !== ''
+      };
+    }
+
+    if (platform === 'whatsapp_web') {
+      const sourceConversationId = leadPhone || (leadName ? `name_${simpleHash(leadName)}` : '');
+      return {
+        platform,
+        conversationId: '',
+        sourceConversationId,
+        leadName,
+        leadPhone,
+        isValid: sourceConversationId !== ''
+      };
+    }
+
+    return {
+      platform: '',
+      conversationId: '',
+      sourceConversationId: '',
+      leadName: '',
+      leadPhone: '',
+      isValid: false
+    };
+  }
+
+  function getContextKey(context = getCurrentContext()) {
+    if (context.platform === 'travel_flow' && context.conversationId) {
+      return `travel_flow:${context.conversationId}`;
+    }
+    if (context.leadPhone) return `${context.platform}:phone:${context.leadPhone}`;
+    if (context.sourceConversationId) return `${context.platform}:source:${context.sourceConversationId}`;
+    return '';
+  }
+
+  function hasValidConversation() {
+    return getCurrentContext().isValid;
   }
 
   function getPanel()                  { return document.getElementById(PANEL_ID); }
@@ -301,6 +467,7 @@
     if (!grid) return;
     grid.innerHTML = fields.map(createField).join('');
     autoFillLeadName();
+    autoFillLeadPhone();
   }
 
   function applyFieldOrderToForm(orderedFieldNames) {
@@ -328,6 +495,7 @@
       if (el) el.value = '';
     });
     autoFillLeadName();
+    autoFillLeadPhone();
   }
 
   function autoFillLeadName() {
@@ -336,6 +504,19 @@
       const name = getLeadNameFromDom();
       if (name) el.value = name;
     }
+  }
+
+  function autoFillLeadPhone() {
+    const el = document.getElementById('tfq-lead_phone');
+    if (el && el.value === '') {
+      const phone = getLeadPhoneFromDom();
+      if (phone) el.value = phone;
+    }
+  }
+
+  function getFormLeadPhoneValue() {
+    const el = document.getElementById('tfq-lead_phone');
+    return normalizePhone(el ? el.value : '');
   }
 
   // ✅ CORRIGIDO: getElementById com template literal correta
@@ -348,18 +529,29 @@
         el.value = data[field.key];
       }
     });
+    autoFillLeadName();
+    autoFillLeadPhone();
   }
 
   // ✅ CORRIGIDO: getElementById com template literal correta
   function getFormData() {
+    const context = getCurrentContext();
     const data = {
-      id:              editingId || 0,
-      conversation_id: getConversationId()
+      id:                     editingId || 0,
+      conversation_id:        context.conversationId,
+      source_platform:        context.platform,
+      source_conversation_id: context.sourceConversationId
     };
     fields.forEach(field => {
       const el = document.getElementById(`tfq-${field.key}`);
       data[field.key] = el ? el.value.trim() : '';
     });
+    if (!data.lead_phone && context.leadPhone) {
+      data.lead_phone = context.leadPhone;
+    }
+    if (!data.nome_lead && context.leadName) {
+      data.nome_lead = context.leadName;
+    }
     return data;
   }
 
@@ -406,7 +598,17 @@
 
   function updateConversationIdUI() {
     const el = getConversationIdDisplay();
-    if (el) el.textContent = getConversationId() || 'Não encontrado';
+    if (!el) return;
+
+    const context = getCurrentContext();
+    if (!context.isValid) {
+      el.textContent = 'Não encontrado';
+      return;
+    }
+
+    const platformLabel = context.platform === 'whatsapp_web' ? 'WhatsApp Web' : 'Travel Flow';
+    const identifier = context.leadPhone || context.conversationId || context.sourceConversationId;
+    el.textContent = `${platformLabel}: ${identifier}`;
   }
 
   /**
@@ -490,7 +692,7 @@
   }
 
   /**
-   * Busca todos os negócios do conversationId atual na API e atualiza o cache.
+   * Busca todos os negócios do contexto atual na API e atualiza o cache.
    *
    * @param {boolean} force      - Se true, ignora cache e recarrega do servidor.
    * @param {boolean} autoSelect - Se true, seleciona automaticamente o negócio
@@ -499,11 +701,13 @@
    *                               não em recarregamentos manuais ou pós-salvar.
    */
   async function loadNegocios(force = false, autoSelect = false) {
-    const conversationId = getConversationId();
+    const context = getCurrentContext();
+    const contextKey = getContextKey(context);
+    const lookupPhone = context.leadPhone || getFormLeadPhoneValue();
     updateConversationIdUI();
     updatePanelTitle();
 
-    if (!conversationId) {
+    if (!context.isValid) {
       currentConversationId = '';
       negociosCache         = [];
       renderNegociosDropdown();
@@ -512,17 +716,25 @@
       return;
     }
 
-    if (!force && conversationId === currentConversationId && negociosCache.length) {
+    if (!force && contextKey === currentConversationId && negociosCache.length) {
       renderNegociosDropdown();
       return;
     }
 
-    currentConversationId = conversationId;
+    currentConversationId = contextKey;
     setStatus('Carregando negócios...', '');
 
     try {
+      const params = new URLSearchParams({
+        _t: Date.now().toString(),
+        source_platform: context.platform
+      });
+      if (context.conversationId) params.set('conversation_id', context.conversationId);
+      if (lookupPhone) params.set('lead_phone', lookupPhone);
+      if (context.sourceConversationId) params.set('source_conversation_id', context.sourceConversationId);
+
       const result = await fetchJson(
-        `${API_BASE}/get_negocios.php?conversation_id=${encodeURIComponent(conversationId)}&_t=${Date.now()}`,
+        `${API_BASE}/get_negocios.php?${params.toString()}`,
         { headers: apiHeaders() }
       );
 
@@ -572,7 +784,7 @@
   async function saveNegocio() {
     const payload = getFormData();
 
-    if (!payload.conversation_id) {
+    if (!getCurrentContext().isValid) {
       setStatus('Selecione uma conversa primeiro.', 'error');
       return;
     }
@@ -625,8 +837,9 @@
   }
 
   async function deleteNegocio() {
-    const conversationId = getConversationId();
-    if (!editingId || !conversationId) {
+    const context = getCurrentContext();
+    const leadPhone = context.leadPhone || getFormLeadPhoneValue();
+    if (!editingId || !context.isValid) {
       setStatus('Selecione um negócio para excluir.', 'error');
       return;
     }
@@ -640,7 +853,13 @@
       const result = await fetchJson(`${API_BASE}/delete_negocio.php`, {
         method:  'POST',
         headers: apiHeaders({ 'Content-Type': 'application/json' }),
-        body:    JSON.stringify({ id: editingId, conversation_id: conversationId })
+        body:    JSON.stringify({
+          id:                     editingId,
+          conversation_id:        context.conversationId,
+          lead_phone:             leadPhone,
+          source_platform:        context.platform,
+          source_conversation_id: context.sourceConversationId
+        })
       });
 
       if (!result.success) {
@@ -940,8 +1159,8 @@
     panel.innerHTML = `
       <div id="tfq-header">
         <div>
-          <h2 id="tfq-title">Negócios do Lead</h2>
-          <div id="tfq-subtitle">Conversation ID: <span id="tfq-conversation-id">-</span></div>
+          <h2 id="tfq-title">Zap Negócios</h2>
+          <div id="tfq-subtitle">Origem: <span id="tfq-conversation-id">-</span></div>
         </div>
         <button id="tfq-close" type="button" aria-label="Fechar painel">×</button>
       </div>
@@ -1142,13 +1361,14 @@
   }
 
   function checkVisibility() {
-    const currentId = getConversationId();
+    const context = getCurrentContext();
+    const currentId = getContextKey(context);
 
     if (currentId !== lastCheckedConversationId) {
       lastCheckedConversationId = currentId;
 
       const panel = getPanel();
-      if (panel && panel.classList.contains('tfq-open') && currentId) {
+      if (panel && panel.classList.contains('tfq-open') && context.isValid) {
         negociosCache         = [];
         currentConversationId = '';
         setEditingState(0);
@@ -1174,27 +1394,21 @@
   }
 
   function syncConversation(force = false) {
-    if (!hasValidConversation()) {
+    const context = getCurrentContext();
+    const contextKey = getContextKey(context);
+
+    if (!context.isValid) {
       removePanel();
       return;
     }
 
     ensurePanel();
 
-    const conversationId = getConversationId();
     if (getConversationIdDisplay()) updateConversationIdUI();
     updatePanelTitle();
 
-    if (!conversationId) {
-      currentConversationId = '';
-      negociosCache         = [];
-      if (getNegociosDropdown()) renderNegociosDropdown();
-      setEditingState(0);
-      return;
-    }
-
-    if (force || conversationId !== currentConversationId) {
-      const isConversationChange = conversationId !== currentConversationId;
+    if (force || contextKey !== currentConversationId) {
+      const isConversationChange = contextKey !== currentConversationId;
       currentConversationId = '';
       negociosCache         = [];
       setEditingState(0);
@@ -1247,13 +1461,13 @@
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
-      lastCheckedConversationId = getConversationId();
+      lastCheckedConversationId = getContextKey();
       checkVisibility();
       startVisibilityCheck();
       scheduleSync(true);
     });
   } else {
-    lastCheckedConversationId = getConversationId();
+    lastCheckedConversationId = getContextKey();
     checkVisibility();
     startVisibilityCheck();
     scheduleSync(true);

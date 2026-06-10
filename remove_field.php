@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negócios — remove_field.php
+ * Zap Negócios — remove_field.php
  * =============================================================================
  * Endpoint da API para remoção de um campo (coluna) da tabela lead_negocios.
  *
@@ -22,7 +22,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negócios
+ * Projeto: Zap Negócios
  * =============================================================================
  */
 
@@ -41,7 +41,7 @@ validateAdminKey();
 // ---------------------------------------------------------------------------
 $protectedFields = array_merge(
     getDefaultFieldNames(),
-    ['id', 'conversation_id', 'created_at', 'updated_at']
+    ['id', 'conversation_id', 'source_platform', 'source_conversation_id', 'created_at', 'updated_at']
 );
 
 // ---------------------------------------------------------------------------

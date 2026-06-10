@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negócios — get_fields.php
+ * Zap Negócios — get_fields.php
  * =============================================================================
  * Lista os campos atuais da tabela lead_negocios com metadados administráveis:
  * rótulo, tipo visual, opções de select, ordem, campo padrão e removível.

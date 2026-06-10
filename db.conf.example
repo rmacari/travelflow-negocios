@@ -1,5 +1,5 @@
 # =============================================================================
-# Travel Flow Negócios — db.conf.example
+# Zap Negócios — db.conf.example
 # =============================================================================
 # Arquivo de configuração do backend PHP.
 #
@@ -11,7 +11,7 @@
 #
 # Autor:   Ricardo Macari
 # Contato: macari@gmail.com
-# Projeto: Travel Flow Negócios
+# Projeto: Zap Negócios
 # =============================================================================
 
 # Credenciais do banco de dados MySQL
@@ -20,8 +20,8 @@ DB_NAME=seu_banco
 DB_USER=seu_usuario
 DB_PASS=sua_senha
 
-# Origem permitida para requisições CORS (domínio do Travel Flow CRM)
-ALLOWED_ORIGIN=https://travelflow.tur.br
+# Origens permitidas para requisições CORS (CRM e WhatsApp Web)
+ALLOWED_ORIGIN=https://travelflow.tur.br,https://web.whatsapp.com
 
 # Chave de API — usada por todos os usuários para operações normais
 # (salvar, buscar e excluir negócios)

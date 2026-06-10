@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Travel Flow Negócios",
-  "version": "0.5.0",
-  "description": "Extensão para o Travel Flow CRM que permite salvar, organizar e acompanhar negócios de leads em um painel lateral prático, com banco de dados próprio.",
+  "name": "Zap Negócios",
+  "version": "0.6.0",
+  "description": "Extensão para salvar, organizar e acompanhar negócios de leads no Travel Flow CRM e no WhatsApp Web, com banco de dados próprio.",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -22,7 +22,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Travel Flow Negócios",
+    "default_title": "Zap Negócios",
     "default_icon": {
       "16": "icons/icon-16.png",
       "32": "icons/icon-32.png",
@@ -47,6 +47,18 @@
       ],
       "js": [
         "page-bridge.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://web.whatsapp.com/*"
+      ],
+      "js": [
         "content.js"
       ],
       "css": [

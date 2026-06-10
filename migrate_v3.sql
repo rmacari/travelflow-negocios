@@ -1,5 +1,5 @@
 -- =============================================================================
--- Travel Flow Negócios — migrate_v3.sql
+-- Zap Negócios — migrate_v3.sql
 -- =============================================================================
 -- Adiciona campos de acompanhamento comercial e a tabela de configuração
 -- persistida dos campos.

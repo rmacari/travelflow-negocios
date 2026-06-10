@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * Travel Flow Negócios — options.js
+ * Zap Negócios — options.js
  * =============================================================================
  * Lógica da página de configuração da extensão Chrome.
  *
@@ -17,7 +17,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negócios
+ * Projeto: Zap Negócios
  * =============================================================================
  */
 

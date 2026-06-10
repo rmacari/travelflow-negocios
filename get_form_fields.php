@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negócios — get_form_fields.php
+ * Zap Negócios — get_form_fields.php
  * =============================================================================
  * Lista os campos exibidos no formulário da extensão, já com ordem, rótulo,
  * tipo e opções salvos no servidor.

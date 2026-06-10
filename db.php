@@ -1,7 +1,7 @@
 <?php
 /**
  * =============================================================================
- * Travel Flow Negócios — db.php
+ * Zap Negócios — db.php
  * =============================================================================
  * Módulo de conexão com o banco de dados MySQL e configuração de CORS.
  *
@@ -19,7 +19,7 @@
  *
  * Autor:   Ricardo Macari
  * Contato: macari@gmail.com
- * Projeto: Travel Flow Negócios
+ * Projeto: Zap Negócios
  * =============================================================================
  */
 
@@ -113,7 +113,14 @@ function getDb()
 function sendCors()
 {
     $config = loadConfig(__DIR__ . '/db.conf');
-    $origin = $config['ALLOWED_ORIGIN'] ?? 'https://travelflow.tur.br';
+    $allowedOrigins = array_filter(array_map(
+        'trim',
+        explode(',', $config['ALLOWED_ORIGIN'] ?? 'https://travelflow.tur.br,https://web.whatsapp.com')
+    ));
+    $requestOrigin = $_SERVER['HTTP_ORIGIN'] ?? '';
+    $origin = in_array($requestOrigin, $allowedOrigins, true)
+        ? $requestOrigin
+        : ($allowedOrigins[0] ?? 'https://travelflow.tur.br');
 
     header('Content-Type: application/json; charset=utf-8');
     header('Access-Control-Allow-Origin: '  . $origin);
@@ -181,6 +188,7 @@ function getDefaultFieldMeta()
 {
     return [
         'nome_lead'        => ['label' => 'Nome do Lead', 'type' => 'text', 'auto' => true],
+        'lead_phone'       => ['label' => 'Telefone do Lead', 'type' => 'text', 'auto' => true],
         'email'            => ['label' => 'Email', 'type' => 'text'],
         'destino'          => ['label' => 'Destino', 'type' => 'text'],
         'status_negocio'   => [
@@ -319,6 +327,17 @@ function getGeneratedFieldLabel($fieldName)
     return ucwords(str_replace('_', ' ', $fieldName));
 }
 
+function normalizeLeadPhone($phone)
+{
+    return preg_replace('/\D+/', '', (string) $phone);
+}
+
+function normalizeSourcePlatform($platform)
+{
+    $platform = strtolower(trim((string) $platform));
+    return preg_match('/^[a-z0-9_]{2,50}$/', $platform) ? $platform : 'unknown';
+}
+
 function ensureFieldConfigRows($columns)
 {
     ensureFieldConfigTable();
@@ -335,7 +354,10 @@ function ensureFieldConfigRows($columns)
 
     foreach ($columns as $column) {
         $name = $column['COLUMN_NAME'];
-        if (!preg_match('/^[a-z][a-z0-9_]{1,63}$/', $name) || $name === 'conversation_id') {
+        if (
+            !preg_match('/^[a-z][a-z0-9_]{1,63}$/', $name)
+            || in_array($name, ['conversation_id', 'source_platform', 'source_conversation_id'], true)
+        ) {
             continue;
         }
 
@@ -357,7 +379,7 @@ function getFieldDefinitions()
     $columns = getLeadNegocioColumnMeta();
     ensureFieldConfigRows($columns);
 
-    $systemColumns = ['id', 'conversation_id', 'created_at', 'updated_at'];
+    $systemColumns = ['id', 'conversation_id', 'source_platform', 'source_conversation_id', 'created_at', 'updated_at'];
     $defaultMeta = getDefaultFieldMeta();
     $columnByName = [];
 
@@ -467,7 +489,8 @@ function sanitizeColumnName($name)
         'table', 'index', 'from', 'where', 'join', 'order', 'group', 'by',
         'having', 'limit', 'offset', 'and', 'or', 'not', 'null', 'true',
         'false', 'int', 'varchar', 'text', 'timestamp', 'primary', 'key',
-        'id', 'conversation_id', 'created_at', 'updated_at'
+        'id', 'conversation_id', 'source_platform', 'source_conversation_id',
+        'created_at', 'updated_at'
     ];
 
     $name = strtolower(trim($name));

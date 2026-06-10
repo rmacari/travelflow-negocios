@@ -1,11 +1,13 @@
 /**
- * Background service worker da extensão Travel Flow Negócios.
+ * Background service worker da extensão Zap Negócios.
  *
  * Mantém o clique no ícone útil: abre as opções quando a extensão ainda não
- * foi configurada e alterna o painel lateral quando o usuário está no CRM.
+ * foi configurada e alterna o painel lateral quando o usuário está no CRM
+ * ou no WhatsApp Web.
  */
 
 const TRAVEL_FLOW_HOST = 'travelflow.tur.br';
+const WHATSAPP_HOST = 'web.whatsapp.com';
 
 function getUserConfig() {
   return new Promise(resolve => {
@@ -22,10 +24,13 @@ function isConfigured(config) {
   return Boolean(config.apiBase && config.apiKey);
 }
 
-function isTravelFlowTab(tab) {
+function isSupportedTab(tab) {
   try {
     const url = new URL(tab.url || '');
-    return url.hostname === TRAVEL_FLOW_HOST && url.pathname.includes('/atendimento-web');
+    return (
+      (url.hostname === TRAVEL_FLOW_HOST && url.pathname.includes('/atendimento-web')) ||
+      url.hostname === WHATSAPP_HOST
+    );
   } catch {
     return false;
   }
@@ -43,7 +48,7 @@ chrome.action.onClicked.addListener(async tab => {
     return;
   }
 
-  if (!tab || !tab.id || !isTravelFlowTab(tab)) {
+  if (!tab || !tab.id || !isSupportedTab(tab)) {
     openOptions();
     return;
   }

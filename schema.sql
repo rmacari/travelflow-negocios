@@ -1,17 +1,17 @@
 -- =============================================================================
--- Travel Flow Negócios — schema.sql
+-- Zap Negócios — schema.sql
 -- =============================================================================
 -- Script de criação da tabela principal do sistema no MySQL.
 --
--- A tabela lead_negocios armazena múltiplos negócios vinculados a um
--- atendimento do Travel Flow CRM, identificado pelo conversation_id.
+-- A tabela lead_negocios armazena múltiplos negócios vinculados a um lead,
+-- usando conversation_id no Travel Flow e telefone/origem para uso universal.
 -- Cada negócio representa uma cotação ou interesse de viagem distinto
 -- do mesmo lead, permitindo que o operador gerencie várias propostas
 -- simultaneamente dentro de um único atendimento.
 --
 -- Autor:   Ricardo Macari
 -- Contato: macari@gmail.com
--- Projeto: Travel Flow Negócios
+-- Projeto: Zap Negócios
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS lead_negocios (
@@ -23,9 +23,14 @@ CREATE TABLE IF NOT EXISTS lead_negocios (
     -- Chave primária com incremento automático, única por negócio
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 
-    -- ID do atendimento no Travel Flow CRM (parâmetro conversationId da URL).
-    -- Vínculo principal entre a extensão e os negócios armazenados.
+    -- ID do atendimento no Travel Flow CRM (mantido por compatibilidade).
     conversation_id VARCHAR(191) NOT NULL,
+
+    -- Plataforma de origem do contexto: travel_flow, whatsapp_web etc.
+    source_platform VARCHAR(50) NOT NULL DEFAULT 'travel_flow',
+
+    -- Identificador da conversa na plataforma de origem.
+    source_conversation_id VARCHAR(191) NOT NULL DEFAULT '',
 
     -- -------------------------------------------------------------------------
     -- DADOS DO LEAD
@@ -33,6 +38,9 @@ CREATE TABLE IF NOT EXISTS lead_negocios (
 
     -- Nome completo do lead, lido automaticamente do DOM da página de atendimento
     nome_lead VARCHAR(255) NOT NULL DEFAULT '',
+
+    -- Telefone normalizado do lead, usado como identificador universal quando disponível
+    lead_phone VARCHAR(32) NOT NULL DEFAULT '',
 
     -- E-mail do lead
     email VARCHAR(255) NOT NULL DEFAULT '',
@@ -110,6 +118,12 @@ CREATE TABLE IF NOT EXISTS lead_negocios (
 
     -- Índice simples para buscas por conversation_id (get_negocios.php)
     KEY idx_conversation_id (conversation_id),
+
+    -- Índice para unir negócios do mesmo lead entre CRM e WhatsApp
+    KEY idx_lead_phone (lead_phone),
+
+    -- Índice para fallback por plataforma/conversa quando não há telefone
+    KEY idx_source_context (source_platform, source_conversation_id),
 
     -- Índice composto para ordenação por data de atualização por atendimento
     KEY idx_conversation_updated (conversation_id, updated_at)
