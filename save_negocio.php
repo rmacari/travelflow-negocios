@@ -26,7 +26,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Criar e atualizar negócios exige usuário com permissão de edição
-$currentUser = requireUser('editor');
+$currentUser = requirePermission('negocio.edit');
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY

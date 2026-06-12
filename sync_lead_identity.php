@@ -14,7 +14,7 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-requireUser('editor');
+requirePermission('negocio.edit');
 
 $raw = file_get_contents('php://input');
 $data = json_decode($raw, true);

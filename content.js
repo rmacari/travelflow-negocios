@@ -50,12 +50,33 @@
     y: 120,
     color: '#ce1212'
   };
+  const DEFAULT_PANEL_SETTINGS = {
+    slideMs: 180,
+    rebuildDelayMs: 90
+  };
+  const DEFAULT_NOTIFICATION_SETTINGS = {
+    enabled: true,
+    intervalMinutes: 5,
+    lookaheadMinutes: 15,
+    historyDays: 14,
+    normalPriority: 1,
+    highPriority: 2
+  };
 
   let API_BASE  = '';
   let API_KEY   = '';
   let AUTH_TOKEN = '';
   let CURRENT_USER = null;
+  let userConfigLoaded = false;
+  let toggleSettingsLoaded = false;
+  let panelSettingsLoaded = false;
+  let notificationSettingsLoaded = false;
   let toggleSettings = { ...DEFAULT_TOGGLE_SETTINGS };
+  let panelSettings = { ...DEFAULT_PANEL_SETTINGS };
+  let notificationSettings = { ...DEFAULT_NOTIFICATION_SETTINGS };
+  let rolePermissionMap = {};
+  let userPermissionMap = {};
+  let permissionCatalog = [];
   let toggleDragState = null;
   let suppressNextToggleClick = false;
 
@@ -68,10 +89,12 @@
             API_KEY     = (syncResult.tfq_api_key || '').trim();
             AUTH_TOKEN  = (localResult.tfq_auth_token || '').trim();
             CURRENT_USER = localResult.tfq_user || null;
+            userConfigLoaded = true;
             resolve();
           });
         });
       } catch (e) {
+        userConfigLoaded = true;
         resolve();
       }
     });
@@ -89,16 +112,58 @@
     return CURRENT_USER && roleLevel(CURRENT_USER.role) >= roleLevel(minRole);
   }
 
+  function userPermissions() {
+    if (!CURRENT_USER) return [];
+    if (CURRENT_USER.role === 'owner') return ['*'];
+    return Array.isArray(CURRENT_USER.permissions) ? CURRENT_USER.permissions : [];
+  }
+
+  function hasPermission(permission, fallbackRole = '') {
+    if (!CURRENT_USER) return false;
+    if (CURRENT_USER.role === 'owner') return true;
+    const permissions = userPermissions();
+    if (permissions.includes('*') || permissions.includes(permission)) return true;
+    return fallbackRole ? hasRole(fallbackRole) : false;
+  }
+
   function canEdit() {
-    return hasRole('editor');
+    return hasPermission('negocio.edit', 'editor');
+  }
+
+  function canDeleteNegocio() {
+    return hasPermission('negocio.delete', 'admin');
+  }
+
+  function canRestoreNegocio() {
+    return hasPermission('negocio.restore', 'admin');
+  }
+
+  function canViewTasks() {
+    return hasPermission('tasks.view', 'viewer');
+  }
+
+  function canEditTasks() {
+    return hasPermission('tasks.edit', 'editor');
+  }
+
+  function canAdminTasks() {
+    return hasPermission('tasks.admin', 'admin');
+  }
+
+  function canAccessAdmin() {
+    return hasPermission('admin.access', 'admin');
   }
 
   function isAdmin() {
-    return hasRole('admin');
+    return canAccessAdmin();
+  }
+
+  function canViewUsersAdmin() {
+    return hasPermission('admin.users.view', 'admin') || hasPermission('admin.users.edit', 'admin');
   }
 
   function canManageUsers() {
-    return hasRole('admin');
+    return hasPermission('admin.users.edit', 'admin');
   }
 
   function canCreateOwner() {
@@ -170,11 +235,13 @@
       try {
         chrome.storage.sync.get(['tfq_toggle_settings'], result => {
           toggleSettings = normalizeToggleSettings(result.tfq_toggle_settings || {});
+          toggleSettingsLoaded = true;
           applyToggleSettings();
           resolve(toggleSettings);
         });
       } catch {
         toggleSettings = { ...DEFAULT_TOGGLE_SETTINGS };
+        toggleSettingsLoaded = true;
         applyToggleSettings();
         resolve(toggleSettings);
       }
@@ -194,6 +261,104 @@
             return;
           }
           resolve(toggleSettings);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  function normalizePanelSettings(value = {}) {
+    return {
+      slideMs: clampNumber(value.slideMs ?? DEFAULT_PANEL_SETTINGS.slideMs, 0, 800),
+      rebuildDelayMs: clampNumber(value.rebuildDelayMs ?? DEFAULT_PANEL_SETTINGS.rebuildDelayMs, 0, 600)
+    };
+  }
+
+  function applyPanelSettings() {
+    panelSettings = normalizePanelSettings(panelSettings);
+    document.documentElement.style.setProperty('--tfq-panel-slide-ms', `${panelSettings.slideMs}ms`);
+  }
+
+  function loadPanelSettings() {
+    return new Promise(resolve => {
+      try {
+        chrome.storage.sync.get(['tfq_panel_settings'], result => {
+          panelSettings = normalizePanelSettings(result.tfq_panel_settings || {});
+          panelSettingsLoaded = true;
+          applyPanelSettings();
+          resolve(panelSettings);
+        });
+      } catch {
+        panelSettings = { ...DEFAULT_PANEL_SETTINGS };
+        panelSettingsLoaded = true;
+        applyPanelSettings();
+        resolve(panelSettings);
+      }
+    });
+  }
+
+  function savePanelSettings(settings) {
+    panelSettings = normalizePanelSettings(settings);
+    applyPanelSettings();
+
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.sync.set({ tfq_panel_settings: panelSettings }, () => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+          panelSettingsLoaded = true;
+          resolve(panelSettings);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  function normalizeNotificationSettings(value = {}) {
+    return {
+      enabled: value.enabled !== false,
+      intervalMinutes: clampNumber(value.intervalMinutes ?? DEFAULT_NOTIFICATION_SETTINGS.intervalMinutes, 1, 120),
+      lookaheadMinutes: clampNumber(value.lookaheadMinutes ?? DEFAULT_NOTIFICATION_SETTINGS.lookaheadMinutes, 0, 1440),
+      historyDays: clampNumber(value.historyDays ?? DEFAULT_NOTIFICATION_SETTINGS.historyDays, 1, 60),
+      normalPriority: clampNumber(value.normalPriority ?? DEFAULT_NOTIFICATION_SETTINGS.normalPriority, 0, 2),
+      highPriority: clampNumber(value.highPriority ?? DEFAULT_NOTIFICATION_SETTINGS.highPriority, 0, 2)
+    };
+  }
+
+  function loadNotificationSettings() {
+    return new Promise(resolve => {
+      try {
+        chrome.storage.sync.get(['tfq_notification_settings'], result => {
+          notificationSettings = normalizeNotificationSettings(result.tfq_notification_settings || {});
+          notificationSettingsLoaded = true;
+          resolve(notificationSettings);
+        });
+      } catch {
+        notificationSettings = { ...DEFAULT_NOTIFICATION_SETTINGS };
+        notificationSettingsLoaded = true;
+        resolve(notificationSettings);
+      }
+    });
+  }
+
+  function saveNotificationSettings(settings) {
+    notificationSettings = normalizeNotificationSettings(settings);
+
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.sync.set({ tfq_notification_settings: notificationSettings }, () => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+          notificationSettingsLoaded = true;
+          resolve(notificationSettings);
         });
       } catch (error) {
         reject(error);
@@ -253,8 +418,8 @@
   }
 
   async function saveToggleAppearance() {
-    if (!isAdmin()) {
-      setToggleAppearanceStatus('Somente administradores podem alterar o botão.', 'error');
+    if (!hasPermission('admin.appearance.edit', 'admin')) {
+      setToggleAppearanceStatus('Seu usuário não tem permissão para alterar o botão.', 'error');
       return;
     }
 
@@ -269,8 +434,8 @@
   }
 
   async function resetToggleAppearance() {
-    if (!isAdmin()) {
-      setToggleAppearanceStatus('Somente administradores podem alterar o botão.', 'error');
+    if (!hasPermission('admin.appearance.edit', 'admin')) {
+      setToggleAppearanceStatus('Seu usuário não tem permissão para alterar o botão.', 'error');
       return;
     }
 
@@ -297,9 +462,151 @@
     if (yNumberInput) yNumberInput.value = String(settings.y);
   }
 
+  function getPanelSettingsStatusEl() {
+    return document.getElementById('tfq-panel-settings-status');
+  }
+
+  function setPanelSettingsStatus(message, type = '') {
+    const el = getPanelSettingsStatusEl();
+    if (!el) return;
+    el.textContent = message || '';
+    el.className = type ? type : '';
+  }
+
+  function renderPanelSettingsForm() {
+    const slideInput = document.getElementById('tfq-panel-slide-ms');
+    const slideNumberInput = document.getElementById('tfq-panel-slide-ms-number');
+    const rebuildInput = document.getElementById('tfq-panel-rebuild-delay-ms');
+    const rebuildNumberInput = document.getElementById('tfq-panel-rebuild-delay-ms-number');
+    if (!slideInput || !slideNumberInput || !rebuildInput || !rebuildNumberInput) return;
+
+    const settings = normalizePanelSettings(panelSettings);
+    slideInput.value = String(settings.slideMs);
+    slideNumberInput.value = String(settings.slideMs);
+    rebuildInput.value = String(settings.rebuildDelayMs);
+    rebuildNumberInput.value = String(settings.rebuildDelayMs);
+    applyPanelSettings();
+  }
+
+  function collectPanelSettingsForm() {
+    return normalizePanelSettings({
+      slideMs: document.getElementById('tfq-panel-slide-ms-number')?.value || document.getElementById('tfq-panel-slide-ms')?.value,
+      rebuildDelayMs: document.getElementById('tfq-panel-rebuild-delay-ms-number')?.value || document.getElementById('tfq-panel-rebuild-delay-ms')?.value
+    });
+  }
+
+  function previewPanelSettings() {
+    panelSettings = collectPanelSettingsForm();
+    applyPanelSettings();
+  }
+
+  async function savePanelSettingsFromForm() {
+    if (!hasPermission('admin.window.edit', 'admin')) {
+      setPanelSettingsStatus('Seu usuário não tem permissão para alterar a janela.', 'error');
+      return;
+    }
+
+    try {
+      setPanelSettingsStatus('Salvando ajustes da janela...', '');
+      await savePanelSettings(collectPanelSettingsForm());
+      renderPanelSettingsForm();
+      setPanelSettingsStatus('Ajustes da janela salvos neste navegador.', 'success');
+    } catch (error) {
+      setPanelSettingsStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
+  async function resetPanelSettings() {
+    if (!hasPermission('admin.window.edit', 'admin')) {
+      setPanelSettingsStatus('Seu usuário não tem permissão para alterar a janela.', 'error');
+      return;
+    }
+
+    try {
+      setPanelSettingsStatus('Restaurando padrão...', '');
+      await savePanelSettings(DEFAULT_PANEL_SETTINGS);
+      renderPanelSettingsForm();
+      setPanelSettingsStatus('Ajustes da janela restaurados.', 'success');
+    } catch (error) {
+      setPanelSettingsStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
+  function getNotificationSettingsStatusEl() {
+    return document.getElementById('tfq-notification-settings-status');
+  }
+
+  function setNotificationSettingsStatus(message, type = '') {
+    const el = getNotificationSettingsStatusEl();
+    if (!el) return;
+    el.textContent = message || '';
+    el.className = type ? type : '';
+  }
+
+  function renderNotificationSettingsForm() {
+    const enabledInput = document.getElementById('tfq-notifications-enabled');
+    const intervalInput = document.getElementById('tfq-notification-interval');
+    const lookaheadInput = document.getElementById('tfq-notification-lookahead');
+    const historyInput = document.getElementById('tfq-notification-history-days');
+    const normalPriorityInput = document.getElementById('tfq-notification-normal-priority');
+    const highPriorityInput = document.getElementById('tfq-notification-high-priority');
+    if (!enabledInput || !intervalInput || !lookaheadInput || !historyInput || !normalPriorityInput || !highPriorityInput) return;
+
+    const settings = normalizeNotificationSettings(notificationSettings);
+    enabledInput.checked = settings.enabled;
+    intervalInput.value = String(settings.intervalMinutes);
+    lookaheadInput.value = String(settings.lookaheadMinutes);
+    historyInput.value = String(settings.historyDays);
+    normalPriorityInput.value = String(settings.normalPriority);
+    highPriorityInput.value = String(settings.highPriority);
+  }
+
+  function collectNotificationSettingsForm() {
+    return normalizeNotificationSettings({
+      enabled: document.getElementById('tfq-notifications-enabled')?.checked !== false,
+      intervalMinutes: document.getElementById('tfq-notification-interval')?.value,
+      lookaheadMinutes: document.getElementById('tfq-notification-lookahead')?.value,
+      historyDays: document.getElementById('tfq-notification-history-days')?.value,
+      normalPriority: document.getElementById('tfq-notification-normal-priority')?.value,
+      highPriority: document.getElementById('tfq-notification-high-priority')?.value
+    });
+  }
+
+  async function saveNotificationSettingsFromForm() {
+    if (!hasPermission('admin.notifications.edit', 'admin')) {
+      setNotificationSettingsStatus('Seu usuário não tem permissão para alterar notificações.', 'error');
+      return;
+    }
+
+    try {
+      setNotificationSettingsStatus('Salvando notificações...', '');
+      await saveNotificationSettings(collectNotificationSettingsForm());
+      renderNotificationSettingsForm();
+      setNotificationSettingsStatus('Notificações salvas neste navegador.', 'success');
+    } catch (error) {
+      setNotificationSettingsStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
+  async function resetNotificationSettings() {
+    if (!hasPermission('admin.notifications.edit', 'admin')) {
+      setNotificationSettingsStatus('Seu usuário não tem permissão para alterar notificações.', 'error');
+      return;
+    }
+
+    try {
+      setNotificationSettingsStatus('Restaurando padrão...', '');
+      await saveNotificationSettings(DEFAULT_NOTIFICATION_SETTINGS);
+      renderNotificationSettingsForm();
+      setNotificationSettingsStatus('Notificações restauradas para o padrão.', 'success');
+    } catch (error) {
+      setNotificationSettingsStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
   function setupToggleDragging(toggle) {
     toggle.addEventListener('pointerdown', event => {
-      if (event.button !== 0 || !isAdmin()) return;
+      if (event.button !== 0 || !hasPermission('admin.appearance.edit', 'admin')) return;
 
       const rect = toggle.getBoundingClientRect();
       toggleDragState = {
@@ -486,7 +793,12 @@
   let taskOverviewFilter        = 'all';
   let taskAssigneesCache        = [];
   let editingId                 = 0;
+  let negocioViewMode           = 'create';
+  let businessEditUnlocked      = false;
+  let negocioLoadingLocked      = false;
   let editingTaskId             = 0;
+  let focusedTaskId             = 0;
+  let focusTaskNavigationPending = false;
   let lastFormSignature         = '';
   let formFieldsLoadedFromServer = false;
   let formFieldsLoadError        = '';
@@ -496,6 +808,8 @@
   let visibilityCheckInterval   = null;
   let lastCheckedConversationId = '';
   let observerDebounceTimer     = null;
+  let panelRebuildContextKey    = '';
+  let panelRebuildTimer         = null;
 
   function getPlatform() {
     const host = window.location.hostname;
@@ -761,6 +1075,9 @@
   function getFormTitle()              { return document.getElementById('tfq-form-title'); }
   function getEditingBadge()           { return document.getElementById('tfq-editing-badge'); }
   function getRestoreBtn()             { return document.getElementById('tfq-restore'); }
+  function getEditNegocioBtn()         { return document.getElementById('tfq-edit-negocio'); }
+  function getCancelNegocioBtn()       { return document.getElementById('tfq-cancel'); }
+  function getNegocioFormGrid()        { return document.getElementById('tfq-negocio-form-grid'); }
 
   function setStatus(message, type) {
     const el = getStatus();
@@ -785,12 +1102,14 @@
       ? '<span class="tfq-auto-hint" title="Preenchido automaticamente">⚡</span>'
       : '';
 
+    const lockedAttr = isNegocioFieldLocked() ? ' disabled' : '';
+
     if (field.type === 'select') {
       const options = Array.isArray(field.options) ? field.options : [''];
       return `
         <div class="tfq-row">
           <label class="tfq-label" for="tfq-${fieldKey}">${fieldLabel}${autoHint}</label>
-          <select class="tfq-select" id="tfq-${fieldKey}">
+          <select class="tfq-select" id="tfq-${fieldKey}"${lockedAttr}>
             ${options.map(option =>
               `<option value="${escapeHtml(option)}">${escapeHtml(option || 'Selecione')}</option>`
             ).join('')}
@@ -803,7 +1122,7 @@
       return `
         <div class="tfq-row">
           <label class="tfq-label" for="tfq-${fieldKey}">${fieldLabel}${autoHint}</label>
-          <textarea class="tfq-textarea" id="tfq-${fieldKey}" rows="4"></textarea>
+          <textarea class="tfq-textarea" id="tfq-${fieldKey}" rows="4"${lockedAttr}></textarea>
         </div>
       `;
     }
@@ -817,7 +1136,7 @@
     return `
       <div class="tfq-row">
         <label class="tfq-label" for="tfq-${fieldKey}">${fieldLabel}${autoHint}</label>
-        <input class="tfq-input" id="tfq-${fieldKey}" type="${inputType}"${inputMode}${placeholder} />
+        <input class="tfq-input" id="tfq-${fieldKey}" type="${inputType}"${inputMode}${placeholder}${lockedAttr} />
       </div>
     `;
   }
@@ -850,11 +1169,12 @@
   }
 
   function renderFormFields() {
-    const grid = document.querySelector(`#${PANEL_ID} .tfq-grid`);
+    const grid = getNegocioFormGrid();
     if (!grid) return;
     grid.innerHTML = fields.map(createField).join('');
     autoFillLeadName();
     autoFillLeadPhone();
+    reapplyNegocioFieldLock();
   }
 
   function applyFieldOrderToForm(orderedFieldNames) {
@@ -934,7 +1254,10 @@
   // ✅ CORRIGIDO: getElementById com template literal correta
   function fillForm(data) {
     clearForm();
-    if (!data) return;
+    if (!data) {
+      reapplyNegocioFieldLock();
+      return;
+    }
     fields.forEach(field => {
       const el = document.getElementById(`tfq-${field.key}`);
       if (el && data[field.key] != null) {
@@ -943,6 +1266,7 @@
     });
     autoFillLeadName();
     autoFillLeadPhone();
+    reapplyNegocioFieldLock();
   }
 
   // ✅ CORRIGIDO: getElementById com template literal correta
@@ -990,50 +1314,207 @@
     return !hasUnsavedChanges() || window.confirm(message);
   }
 
-  function setEditingState(id, item) {
-    editingId = id || 0;
+  function isNegocioFieldLocked() {
+    return negocioLoadingLocked || (editingId > 0 && !businessEditUnlocked);
+  }
+
+  function setNegocioFieldsReadonly(readonly) {
+    const locked = Boolean(readonly);
+    const grid = getNegocioFormGrid();
+    if (grid) {
+      grid.classList.toggle('tfq-negocio-form-locked', locked);
+      grid.querySelectorAll('input, select, textarea').forEach(el => {
+        el.disabled = locked;
+        el.readOnly = locked;
+        el.setAttribute('aria-disabled', locked ? 'true' : 'false');
+      });
+      return;
+    }
+
+    fields.forEach(field => {
+      const el = document.getElementById(`tfq-${field.key}`);
+      if (el) {
+        el.disabled = locked;
+        el.readOnly = locked;
+        el.setAttribute('aria-disabled', locked ? 'true' : 'false');
+      }
+    });
+  }
+
+  function reapplyNegocioFieldLock() {
+    setNegocioFieldsReadonly(isNegocioFieldLocked());
+  }
+
+  function beginNegocioLoadingState(message = 'Carregando negócio...') {
+    negocioViewMode = 'loading';
+    businessEditUnlocked = false;
+    negocioLoadingLocked = true;
+    clearForm();
+    if (getFormTitle()) getFormTitle().textContent = 'Carregando Negócio';
+    if (getEditingBadge()) getEditingBadge().textContent = '';
+    const editBtn = getEditNegocioBtn();
+    if (editBtn) editBtn.classList.add('tfq-hidden');
+    const saveBtn = document.getElementById('tfq-save');
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.title = message;
+    }
+    const deleteBtn = document.getElementById('tfq-delete');
+    if (deleteBtn) deleteBtn.disabled = true;
+    const cancelBtn = getCancelNegocioBtn();
+    if (cancelBtn) {
+      cancelBtn.textContent = 'Limpar';
+      cancelBtn.title = message;
+    }
+    reapplyNegocioFieldLock();
+  }
+
+  function forceCurrentNegocioViewMode() {
+    if (editingId <= 0) {
+      reapplyNegocioFieldLock();
+      return;
+    }
+
+    const item = negociosCache.find(n => Number(n.id) === Number(editingId));
+    if (item) {
+      setEditingState(editingId, item, 'view');
+      const dropdown = getNegociosDropdown();
+      if (dropdown) dropdown.value = String(editingId);
+      return;
+    }
+
+    negocioLoadingLocked = false;
+    negocioViewMode = 'view';
+    businessEditUnlocked = false;
+    reapplyNegocioFieldLock();
+  }
+
+  function scheduleCurrentNegocioViewModeLock() {
+    [0, 80, 250, 600].forEach(delay => {
+      window.setTimeout(forceCurrentNegocioViewMode, delay);
+    });
+  }
+
+  function isNegocioFormControl(target) {
+    return Boolean(target && target.closest && target.closest('#tfq-negocio-form-grid input, #tfq-negocio-form-grid select, #tfq-negocio-form-grid textarea'));
+  }
+
+  function blockLockedNegocioEditEvent(event) {
+    if (!isNegocioFieldLocked() || !isNegocioFormControl(event.target)) return;
+    if (event.type === 'keydown' && event.key === 'Tab') return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    reapplyNegocioFieldLock();
+    setStatus('Clique em Editar para alterar este negócio.', 'error');
+  }
+
+  function installNegocioEditGuard(panel) {
+    ['beforeinput', 'input', 'change', 'paste', 'cut', 'drop', 'keydown'].forEach(type => {
+      panel.addEventListener(type, blockLockedNegocioEditEvent, true);
+    });
+  }
+
+  function applyNegocioMode(item = null) {
+    const saveBtn = document.getElementById('tfq-save');
     const deleteBtn = document.getElementById('tfq-delete');
     const restoreBtn = getRestoreBtn();
-    const saveBtn = document.getElementById('tfq-save');
-    const canDelete = isAdmin();
+    const editBtn = getEditNegocioBtn();
+    const cancelBtn = getCancelNegocioBtn();
+    const canDelete = canDeleteNegocio();
+    const isDeleted = Boolean(item && hasDeletedAtValue(item.deleted_at));
+    const isExisting = editingId > 0 && item;
+    const isViewing = negocioViewMode === 'view';
+    const isEditing = negocioViewMode === 'edit' && businessEditUnlocked;
+
+    setNegocioFieldsReadonly(isDeleted || isNegocioFieldLocked());
+
+    if (editBtn) {
+      editBtn.classList.toggle('tfq-hidden', !isExisting || isDeleted || isEditing);
+      editBtn.disabled = !canEdit();
+      editBtn.title = canEdit() ? 'Editar negócio' : 'Seu usuário não tem permissão para editar negócios';
+    }
+
+    if (saveBtn) {
+      saveBtn.disabled = isDeleted || isViewing || !canEdit();
+      saveBtn.textContent = isExisting ? 'Salvar alterações' : 'Salvar';
+      saveBtn.title = isViewing
+        ? 'Clique em Editar para alterar este negócio'
+        : (isDeleted ? 'Restaure o negócio antes de editar' : (canEdit() ? 'Salvar negócio' : 'Seu usuário não tem permissão para salvar negócios'));
+    }
+
+    if (cancelBtn) {
+      cancelBtn.textContent = isExisting && isEditing ? 'Cancelar' : 'Limpar';
+      cancelBtn.title = isExisting && isEditing
+        ? 'Cancelar edição e voltar para visualização'
+        : 'Limpar formulário';
+    }
+
+    if (deleteBtn) {
+      deleteBtn.disabled = !canDelete || !isExisting || isDeleted || isViewing;
+      deleteBtn.title = isViewing
+        ? 'Clique em Editar para excluir este negócio'
+        : (isDeleted ? 'Negócio já está na lixeira' : (canDelete ? 'Excluir negócio' : 'Somente administradores podem excluir negócios'));
+    }
+
+    if (restoreBtn) {
+      restoreBtn.disabled = !canDelete || !isDeleted;
+      restoreBtn.classList.toggle('tfq-hidden', !isDeleted);
+      restoreBtn.title = canDelete ? 'Restaurar negócio' : 'Somente administradores podem restaurar negócios';
+    }
+  }
+
+  function setEditingState(id, item, mode = null) {
+    editingId = id || 0;
     const isDeleted = Boolean(item && hasDeletedAtValue(item.deleted_at));
 
     if (editingId > 0 && item) {
+      negocioLoadingLocked = false;
+      negocioViewMode = mode === 'edit' ? 'edit' : 'view';
+      businessEditUnlocked = negocioViewMode === 'edit';
       fillForm(item);
-      if (getFormTitle())    getFormTitle().textContent    = isDeleted ? 'Negócio excluído' : 'Editando negócio';
+      if (getFormTitle()) {
+        getFormTitle().textContent = isDeleted
+          ? 'Negócio excluído'
+          : (negocioViewMode === 'edit' ? 'Editando Negócio' : 'Mostrando Negócio');
+      }
       if (getEditingBadge()) getEditingBadge().textContent = isDeleted ? `ID #${editingId} - na lixeira` : `ID #${editingId}`;
-      if (saveBtn) {
-        saveBtn.disabled = isDeleted || !canEdit();
-        saveBtn.title = isDeleted ? 'Restaure o negócio antes de editar' : (canEdit() ? 'Salvar negócio' : 'Seu usuário não tem permissão para salvar negócios');
-      }
-      if (deleteBtn) {
-        deleteBtn.disabled = !canDelete || isDeleted;
-        deleteBtn.title = isDeleted ? 'Negócio já está na lixeira' : (canDelete ? 'Excluir negócio' : 'Somente administradores podem excluir negócios');
-      }
-      if (restoreBtn) {
-        restoreBtn.disabled = !canDelete || !isDeleted;
-        restoreBtn.classList.toggle('tfq-hidden', !isDeleted);
-        restoreBtn.title = canDelete ? 'Restaurar negócio' : 'Somente administradores podem restaurar negócios';
-      }
+      applyNegocioMode(item);
     } else {
+      negocioLoadingLocked = false;
+      negocioViewMode = 'create';
+      businessEditUnlocked = false;
       clearForm();
       if (getFormTitle())    getFormTitle().textContent    = 'Novo negócio';
       if (getEditingBadge()) getEditingBadge().textContent = '';
-      if (saveBtn) {
-        saveBtn.disabled = !canEdit();
-        saveBtn.title = canEdit() ? 'Salvar negócio' : 'Seu usuário não tem permissão para salvar negócios';
-      }
-      if (deleteBtn) {
-        deleteBtn.disabled = true;
-        deleteBtn.title = canDelete ? 'Selecione um negócio para excluir' : 'Somente administradores podem excluir negócios';
-      }
-      if (restoreBtn) {
-        restoreBtn.disabled = true;
-        restoreBtn.classList.add('tfq-hidden');
-        restoreBtn.title = 'Selecione um negócio excluído para restaurar';
-      }
+      applyNegocioMode(null);
     }
     markFormPristine();
+  }
+
+  function editSelectedNegocio() {
+    if (!editingId) return;
+    const item = negociosCache.find(n => Number(n.id) === Number(editingId));
+    if (!item) return;
+    setEditingState(editingId, item, 'edit');
+    setStatus('Edição liberada para este negócio.', '');
+  }
+
+  function cancelNegocioEdit() {
+    if (editingId > 0 && businessEditUnlocked) {
+      const item = negociosCache.find(n => Number(n.id) === Number(editingId));
+      if (item) {
+        setEditingState(editingId, item, 'view');
+        setStatus('Edição cancelada. Negócio voltou para visualização.', '');
+        return;
+      }
+    }
+
+    if (!confirmDiscardChanges()) return;
+    setEditingState(0);
+    const dd = getNegociosDropdown();
+    if (dd) dd.value = '';
+    setStatus('Formulário limpo.', '');
   }
 
   function updateConversationIdUI() {
@@ -1123,8 +1604,8 @@
     if (selectedId > 0) {
       const item = negociosCache.find(n => Number(n.id) === selectedId);
       if (item) {
-        setEditingState(selectedId, item);
-        setStatus('Negócio selecionado para edição.', '');
+        setEditingState(selectedId, item, 'view');
+        setStatus('Negócio selecionado para visualização.', '');
       }
     } else {
       setEditingState(0);
@@ -1134,7 +1615,7 @@
 
   function shouldIncludeDeletedNegocios() {
     const checkbox = document.getElementById('tfq-include-deleted');
-    return isAdmin() && Boolean(checkbox && checkbox.checked);
+    return (canDeleteNegocio() || canRestoreNegocio()) && Boolean(checkbox && checkbox.checked);
   }
 
   async function fetchNegociosForContext(context) {
@@ -1202,6 +1683,10 @@
     updateConversationIdUI();
     updatePanelTitle();
 
+    if (autoSelect) {
+      beginNegocioLoadingState();
+    }
+
     if (!context.isValid) {
       negociosRequestSeq++;
       currentConversationId = '';
@@ -1214,6 +1699,8 @@
 
     if (!force && contextKey === currentConversationId && negociosCache.length) {
       renderNegociosDropdown();
+      const active = editingId > 0 ? negociosCache.find(item => Number(item.id) === Number(editingId)) : null;
+      if (active) setEditingState(Number(active.id), active, 'view');
       return;
     }
 
@@ -1236,34 +1723,36 @@
       renderTaskNegocioOptions();
 
       const selectLatestActive = () => {
-        const latestActive = negociosCache.find(item => !hasDeletedAtValue(item.deleted_at));
+        const latestActive = negociosCache
+          .filter(item => !hasDeletedAtValue(item.deleted_at))
+          .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0];
         if (!latestActive) {
           setEditingState(0);
           return false;
         }
 
         const latestId = Number(latestActive.id);
-        setEditingState(latestId, latestActive);
+        setEditingState(latestId, latestActive, 'view');
         const dropdown = getNegociosDropdown();
-        if (dropdown) dropdown.value = latestId;
+        if (dropdown) dropdown.value = String(latestId);
         return true;
       };
 
-      if (editingId > 0) {
-        // Mantém o negócio em edição se ainda existir no cache (ex: após salvar)
+      if (autoSelect) {
+        // Troca de conversa: nunca reaproveita modo de edição da conversa anterior.
+        selectLatestActive();
+        scheduleCurrentNegocioViewModeLock();
+      } else if (editingId > 0) {
+        // Qualquer carga vinda do servidor volta para visualização.
+        // Edição só é liberada por clique explícito em Editar.
         const active = negociosCache.find(item => Number(item.id) === editingId);
         if (active) {
-          fillForm(active);
-          markFormPristine();
-        } else if (autoSelect) {
-          selectLatestActive();
+          setEditingState(Number(active.id), active, 'view');
+          const dropdown = getNegociosDropdown();
+          if (dropdown) dropdown.value = String(active.id);
         } else {
           setEditingState(0);
         }
-      } else if (autoSelect && negociosCache.length > 0) {
-        // Troca de conversa: seleciona automaticamente o negócio ativo de maior ID.
-        // negociosCache já vem ordenado por id DESC (mais recente primeiro).
-        selectLatestActive();
       } else {
         // Recarregamento manual, pós-salvar sem ID ou sem negócios: formulário limpo
         clearForm();
@@ -1290,6 +1779,11 @@
   }
 
   async function saveNegocio() {
+    if (editingId > 0 && !businessEditUnlocked) {
+      setStatus('Clique em Editar antes de alterar este negócio.', 'error');
+      return;
+    }
+
     const payload = getFormData();
 
     if (!canEdit()) {
@@ -1337,7 +1831,7 @@
       if (savedId > 0) {
         const active = negociosCache.find(item => Number(item.id) === savedId);
         if (active) {
-          setEditingState(savedId, active);
+          setEditingState(savedId, active, 'view');
         } else {
           setEditingState(0);
         }
@@ -1349,19 +1843,24 @@
     } catch (error) {
       setStatus(`Erro ao salvar: ${error.message}`, 'error');
     } finally {
-      if (saveBtn) saveBtn.disabled = false;
+      const active = editingId > 0 ? negociosCache.find(item => Number(item.id) === Number(editingId)) : null;
+      applyNegocioMode(active || null);
     }
   }
 
   async function deleteNegocio() {
     const context = getCurrentContext();
     const leadPhone = context.leadPhone || getFormLeadPhoneValue();
-    if (!isAdmin()) {
-      setStatus('Somente administradores podem excluir negócios.', 'error');
+    if (!canDeleteNegocio()) {
+      setStatus('Seu usuário não tem permissão para excluir negócios.', 'error');
       return;
     }
     if (!editingId || !context.isValid) {
       setStatus('Selecione um negócio para excluir.', 'error');
+      return;
+    }
+    if (!businessEditUnlocked) {
+      setStatus('Clique em Editar antes de excluir este negócio.', 'error');
       return;
     }
 
@@ -1419,8 +1918,8 @@
     const context = getCurrentContext();
     const leadPhone = context.leadPhone || getFormLeadPhoneValue();
 
-    if (!isAdmin()) {
-      setStatus('Somente administradores podem restaurar negócios.', 'error');
+    if (!canRestoreNegocio()) {
+      setStatus('Seu usuário não tem permissão para restaurar negócios.', 'error');
       return;
     }
     if (!editingId || !context.isValid) {
@@ -1485,9 +1984,50 @@
     tasksCache            = [];
     taskOverviewCache     = [];
     editingId             = 0;
+    negocioViewMode       = 'create';
+    businessEditUnlocked  = false;
+    negocioLoadingLocked  = false;
     editingTaskId         = 0;
     lastFormSignature     = '';
   }
+
+  function rebuildOpenPanelForConversation(contextKey) {
+    if (!contextKey) return false;
+
+    const panel = getPanel();
+    if (!panel || !panel.classList.contains('tfq-open')) return false;
+    if (panelRebuildContextKey === contextKey) return true;
+
+    panelRebuildContextKey = contextKey;
+    if (panelRebuildTimer) window.clearTimeout(panelRebuildTimer);
+
+    panel.classList.remove('tfq-open');
+    const toggle = getToggle();
+    if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    lastCheckedConversationId = contextKey;
+
+    const closeDelay = Math.max(0, panelSettings.slideMs);
+    const rebuildDelay = Math.max(0, panelSettings.rebuildDelayMs);
+    panelRebuildTimer = window.setTimeout(() => {
+      panelRebuildTimer = null;
+      removePanel();
+
+      if (getContextKey() !== contextKey || !hasValidConversation()) {
+        panelRebuildContextKey = '';
+        return;
+      }
+
+      renderPanel();
+      const nextToggle = getToggle();
+      const nextPanel = getPanel();
+      if (nextToggle && nextPanel && !nextPanel.classList.contains('tfq-open')) {
+        nextToggle.click();
+      }
+    }, closeDelay + rebuildDelay);
+
+    return true;
+  }
+
 
   async function loadFields() {
     const statusEl = document.getElementById('tfq-fields-status');
@@ -1748,13 +2288,11 @@
     }[role] || role;
   }
 
-  function getAllowedRoleOptions() {
-    const roles = canCreateOwner()
-      ? ['viewer', 'editor', 'admin', 'owner']
-      : ['viewer', 'editor'];
+  function getAllowedRoleOptions(selectedRole = 'editor') {
+    const roles = ['viewer', 'editor'];
 
     return roles.map(role =>
-      `<option value="${role}" ${role === 'editor' ? 'selected' : ''}>${roleLabel(role)}</option>`
+      `<option value="${role}" ${role === selectedRole ? 'selected' : ''}>${roleLabel(role)}</option>`
     ).join('');
   }
 
@@ -1763,13 +2301,125 @@
     if (roleSelect) roleSelect.innerHTML = getAllowedRoleOptions();
   }
 
+  function manageablePermissionRoles() {
+    return ['viewer', 'editor'];
+  }
+
+  function renderRolePermissionEditor() {
+    const listEl = document.getElementById('tfq-role-permissions-list');
+    if (!listEl) return;
+
+    if (!canManageUsers()) {
+      listEl.innerHTML = '<div class="tfq-empty">Seu usuário não tem permissão para alterar grupos.</div>';
+      return;
+    }
+
+    const catalog = permissionCatalog.length ? permissionCatalog : [
+      { key: 'negocio.view', label: 'Ver negócios' },
+      { key: 'negocio.edit', label: 'Criar e editar negócios' },
+      { key: 'admin.access', label: 'Admin: acessar aba' }
+    ];
+
+    listEl.innerHTML = manageablePermissionRoles().map(role => {
+      const permissions = rolePermissionMap[role] || [];
+      const disabled = !canManageUsers();
+      return `
+        <div class="tfq-permission-role-card" data-role="${escapeHtml(role)}">
+          <div class="tfq-permission-role-head">
+            <strong>${escapeHtml(roleLabel(role))}</strong>
+            <button class="tfq-btn tfq-btn-primary tfq-save-role-permissions" data-role="${escapeHtml(role)}" type="button" ${disabled ? 'disabled' : ''}>Salvar permissões do grupo</button>
+          </div>
+          <div class="tfq-permission-grid">
+            ${catalog.map(item => `
+              <label class="tfq-permission-check" for="tfq-perm-${escapeHtml(role)}-${escapeHtml(item.key).replace(/\./g, '-')}">
+                <input
+                  id="tfq-perm-${escapeHtml(role)}-${escapeHtml(item.key).replace(/\./g, '-')}"
+                  type="checkbox"
+                  value="${escapeHtml(item.key)}"
+                  ${permissions.includes(item.key) || permissions.includes('*') ? 'checked' : ''}
+                  ${disabled ? 'disabled' : ''}
+                />
+                <span>${escapeHtml(item.label || item.key)}</span>
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    listEl.querySelectorAll('.tfq-save-role-permissions').forEach(btn => {
+      btn.addEventListener('click', () => saveRolePermissionsFromForm(btn.dataset.role || 'viewer'));
+    });
+  }
+
+  async function saveRolePermissionsFromForm(role) {
+    const statusEl = document.getElementById('tfq-role-permissions-status');
+    const card = document.querySelector(`.tfq-permission-role-card[data-role="${role}"]`);
+    if (!card) return;
+
+    const permissions = [...card.querySelectorAll('input[type="checkbox"]')]
+      .filter(input => input.checked)
+      .map(input => input.value);
+
+    try {
+      if (statusEl) { statusEl.textContent = 'Salvando permissões do grupo...'; statusEl.className = ''; }
+      const result = await fetchJson(`${API_BASE}/users.php`, {
+        method: 'POST',
+        headers: adminHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ action: 'update_role_permissions', role, permissions })
+      });
+      rolePermissionMap = result.role_permissions || { ...rolePermissionMap, [role]: result.permissions || permissions };
+      if (CURRENT_USER && CURRENT_USER.role === role) {
+        CURRENT_USER.permissions = rolePermissionMap[role] || CURRENT_USER.permissions || [];
+        await chrome.storage.local.set({ tfq_user: CURRENT_USER });
+      }
+      renderRolePermissionEditor();
+      applyAdminSectionPermissions();
+      if (statusEl) { statusEl.textContent = result.message || 'Permissões atualizadas.'; statusEl.className = 'success'; }
+    } catch (error) {
+      if (statusEl) { statusEl.textContent = `Erro: ${error.message}`; statusEl.className = 'error'; }
+    }
+  }
+
+  function getAdminEditPermission(viewPermission) {
+    return {
+      'admin.appearance.view': 'admin.appearance.edit',
+      'admin.window.view': 'admin.window.edit',
+      'admin.notifications.view': 'admin.notifications.edit',
+      'admin.fields.view': 'admin.fields.edit',
+      'admin.users.view': 'admin.users.edit',
+      'admin.audit.view': 'admin.backup.edit'
+    }[viewPermission] || viewPermission;
+  }
+
+  function applyAdminSectionPermissions() {
+    const tabAdmin = document.querySelector(`#${PANEL_ID} .tfq-tab[data-tab="usuarios"]`);
+    if (tabAdmin) {
+      tabAdmin.classList.toggle('tfq-hidden', !canAccessAdmin());
+    }
+
+    document.querySelectorAll(`#${PANEL_ID} [data-admin-permission]`).forEach(section => {
+      const permission = section.getAttribute('data-admin-permission') || '';
+      const canView = hasPermission(permission, 'admin');
+      const canEditSection = hasPermission(getAdminEditPermission(permission), 'admin');
+      section.classList.toggle('tfq-hidden', !canView);
+      section.classList.toggle('tfq-admin-readonly', canView && !canEditSection);
+      section.querySelectorAll('input, select, textarea, button').forEach(control => {
+        if (control.closest('summary')) return;
+        if (control.id === 'tfq-reload-audit') return;
+        control.disabled = canView && !canEditSection;
+      });
+    });
+  }
+
   async function loadUsers() {
     const statusEl = document.getElementById('tfq-users-status');
     const listEl = document.getElementById('tfq-users-list');
     if (!statusEl || !listEl) return;
 
-    if (!canManageUsers()) {
-      listEl.innerHTML = '<div class="tfq-empty">Seu usuário não tem permissão para gerenciar usuários.</div>';
+    if (!canViewUsersAdmin()) {
+      renderRolePermissionEditor();
+      listEl.innerHTML = '<div class="tfq-empty">Seu usuário não tem permissão para ver usuários.</div>';
       statusEl.textContent = '';
       return;
     }
@@ -1782,6 +2432,10 @@
         headers: adminHeaders()
       });
       const users = Array.isArray(result.users) ? result.users : [];
+      rolePermissionMap = result.role_permissions || rolePermissionMap || {};
+      userPermissionMap = result.user_permissions || userPermissionMap || {};
+      permissionCatalog = Array.isArray(result.permission_catalog) ? result.permission_catalog : permissionCatalog;
+      renderRolePermissionEditor();
       renderUsersList(users);
       taskAssigneesCache = users.filter(user => Number(user.is_active) === 1);
       renderTaskAssigneeOptions();
@@ -1792,6 +2446,26 @@
       statusEl.textContent = `Erro: ${error.message}`;
       statusEl.className = 'error';
     }
+  }
+
+  function getUserEffectivePermissions(user) {
+    const override = userPermissionMap[Number(user.id)] || null;
+    return Array.isArray(override) ? override : (rolePermissionMap[user.role] || []);
+  }
+
+  function renderUserPermissionChecks(user, disabled) {
+    const catalog = permissionCatalog.length ? permissionCatalog : [];
+    const permissions = getUserEffectivePermissions(user);
+    return `
+      <div class="tfq-permission-grid tfq-user-permission-grid">
+        ${catalog.map(item => `
+          <label class="tfq-permission-check">
+            <input type="checkbox" value="${escapeHtml(item.key)}" ${permissions.includes(item.key) || permissions.includes('*') ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
+            <span>${escapeHtml(item.label || item.key)}</span>
+          </label>
+        `).join('')}
+      </div>
+    `;
   }
 
   function renderUsersList(users) {
@@ -1806,18 +2480,31 @@
     listEl.innerHTML = users.map(user => {
       const isSelf = CURRENT_USER && Number(CURRENT_USER.id) === Number(user.id);
       const active = Number(user.is_active) === 1;
-      const canTouch = !isSelf && (canCreateOwner() || ['viewer', 'editor'].includes(user.role));
+      const canTouch = !isSelf && canManageTargetRole(user.role);
       const statusLabel = active ? 'ativo' : 'inativo';
+      const override = Array.isArray(userPermissionMap[Number(user.id)]);
+      const protectedRole = !['viewer', 'editor'].includes(user.role);
+      const roleControl = protectedRole
+        ? `<div class="tfq-protected-user-note">Grupo protegido</div>`
+        : `<select class="tfq-select tfq-user-role-select" id="tfq-user-role-${Number(user.id)}" data-id="${Number(user.id)}" ${canTouch ? '' : 'disabled'}>
+            ${getAllowedRoleOptions(user.role)}
+          </select>`;
 
       return `
-        <div class="tfq-field-item" data-user-id="${Number(user.id)}">
-          <div class="tfq-field-item-left">
-            <div class="tfq-field-info">
-              <strong>${escapeHtml(user.full_name || user.username)}</strong>
-              <span class="tfq-field-key">${escapeHtml(user.username)} • ${escapeHtml(roleLabel(user.role))} • ${statusLabel}</span>
+        <div class="tfq-field-item tfq-user-item" data-user-id="${Number(user.id)}">
+          <div class="tfq-field-info">
+            <strong>${escapeHtml(user.full_name || user.username)}</strong>
+            <span class="tfq-field-key">${escapeHtml(user.username)} • ${escapeHtml(roleLabel(user.role))} • ${statusLabel}${override ? ' • permissões próprias' : ''}</span>
+            <div class="tfq-user-controls">
+              <label class="tfq-label" for="tfq-user-role-${Number(user.id)}">Grupo</label>
+              ${roleControl}
             </div>
+            ${renderUserPermissionChecks(user, !canTouch)}
           </div>
           <div class="tfq-item-actions">
+            <button class="tfq-mini-btn tfq-user-save-role" data-id="${Number(user.id)}" ${canTouch ? '' : 'disabled'} title="Salvar grupo do usuário">Salvar grupo</button>
+            <button class="tfq-mini-btn tfq-user-save-permissions" data-id="${Number(user.id)}" ${canTouch ? '' : 'disabled'} title="Salvar permissões próprias">Salvar permissões</button>
+            <button class="tfq-mini-btn tfq-user-reset-permissions" data-id="${Number(user.id)}" ${canTouch && override ? '' : 'disabled'} title="Voltar para permissões do grupo">Usar grupo</button>
             <button class="tfq-mini-btn tfq-user-reset" data-id="${Number(user.id)}" ${canTouch ? '' : 'disabled'} title="Redefinir senha">Senha</button>
             <button class="tfq-mini-btn ${active ? 'tfq-mini-btn-danger' : ''} tfq-user-toggle" data-id="${Number(user.id)}" data-active="${active ? '0' : '1'}" ${canTouch ? '' : 'disabled'} title="${active ? 'Desativar' : 'Reativar'} usuário">${active ? 'Desativar' : 'Reativar'}</button>
           </div>
@@ -1832,6 +2519,23 @@
     listEl.querySelectorAll('.tfq-user-reset').forEach(btn => {
       btn.addEventListener('click', () => resetUserPassword(Number(btn.dataset.id)));
     });
+
+    listEl.querySelectorAll('.tfq-user-save-role').forEach(btn => {
+      btn.addEventListener('click', () => saveUserRole(Number(btn.dataset.id)));
+    });
+
+    listEl.querySelectorAll('.tfq-user-save-permissions').forEach(btn => {
+      btn.addEventListener('click', () => saveUserPermissionsFromForm(Number(btn.dataset.id)));
+    });
+
+    listEl.querySelectorAll('.tfq-user-reset-permissions').forEach(btn => {
+      btn.addEventListener('click', () => resetUserPermissions(Number(btn.dataset.id)));
+    });
+  }
+
+  function canManageTargetRole(role) {
+    if (!canManageUsers()) return false;
+    return ['viewer', 'editor'].includes(role);
   }
 
   async function addUser() {
@@ -1871,6 +2575,65 @@
       if (statusEl) { statusEl.textContent = `Erro: ${error.message}`; statusEl.className = 'error'; }
     } finally {
       if (addBtn) addBtn.disabled = false;
+    }
+  }
+
+  async function saveUserRole(id) {
+    const statusEl = document.getElementById('tfq-users-status');
+    const select = document.querySelector(`.tfq-user-role-select[data-id="${id}"]`);
+    if (!select) return;
+
+    try {
+      if (statusEl) { statusEl.textContent = 'Salvando grupo do usuário...'; statusEl.className = ''; }
+      const result = await fetchJson(`${API_BASE}/users.php`, {
+        method: 'POST',
+        headers: adminHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ action: 'update_role', id, role: select.value })
+      });
+      if (statusEl) { statusEl.textContent = result.message || 'Grupo atualizado.'; statusEl.className = 'success'; }
+      await loadUsers();
+    } catch (error) {
+      if (statusEl) { statusEl.textContent = `Erro: ${error.message}`; statusEl.className = 'error'; }
+    }
+  }
+
+  async function saveUserPermissionsFromForm(id) {
+    const statusEl = document.getElementById('tfq-users-status');
+    const item = document.querySelector(`.tfq-user-item[data-user-id="${id}"]`);
+    if (!item) return;
+    const permissions = [...item.querySelectorAll('.tfq-user-permission-grid input[type="checkbox"]')]
+      .filter(input => input.checked)
+      .map(input => input.value);
+
+    try {
+      if (statusEl) { statusEl.textContent = 'Salvando permissões do usuário...'; statusEl.className = ''; }
+      const result = await fetchJson(`${API_BASE}/users.php`, {
+        method: 'POST',
+        headers: adminHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ action: 'update_user_permissions', id, permissions })
+      });
+      userPermissionMap = result.user_permissions || { ...userPermissionMap, [id]: result.permissions || permissions };
+      if (statusEl) { statusEl.textContent = result.message || 'Permissões do usuário atualizadas.'; statusEl.className = 'success'; }
+      await loadUsers();
+    } catch (error) {
+      if (statusEl) { statusEl.textContent = `Erro: ${error.message}`; statusEl.className = 'error'; }
+    }
+  }
+
+  async function resetUserPermissions(id) {
+    const statusEl = document.getElementById('tfq-users-status');
+    try {
+      if (statusEl) { statusEl.textContent = 'Removendo permissões próprias...'; statusEl.className = ''; }
+      const result = await fetchJson(`${API_BASE}/users.php`, {
+        method: 'POST',
+        headers: adminHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ action: 'reset_user_permissions', id })
+      });
+      userPermissionMap = result.user_permissions || {};
+      if (statusEl) { statusEl.textContent = result.message || 'Usuário voltou ao grupo.'; statusEl.className = 'success'; }
+      await loadUsers();
+    } catch (error) {
+      if (statusEl) { statusEl.textContent = `Erro: ${error.message}`; statusEl.className = 'error'; }
     }
   }
 
@@ -1924,8 +2687,8 @@
   }
 
   async function downloadBackup() {
-    if (!isAdmin()) {
-      setAuditStatus('Somente administradores podem baixar backup.', 'error');
+    if (!hasPermission('admin.backup.edit', 'admin')) {
+      setAuditStatus('Seu usuário não tem permissão para baixar backup.', 'error');
       return;
     }
 
@@ -1961,7 +2724,7 @@
 
   async function loadAuditLog() {
     const listEl = document.getElementById('tfq-audit-list');
-    if (!listEl || !isAdmin()) return;
+    if (!listEl || !hasPermission('admin.audit.view', 'admin')) return;
 
     listEl.innerHTML = '<div class="tfq-empty">Carregando auditoria...</div>';
 
@@ -2145,15 +2908,15 @@
       select.value = String(currentUser.id);
     }
 
-    select.disabled = !isAdmin();
-    select.title = isAdmin()
+    select.disabled = !canAdminTasks();
+    select.title = canAdminTasks()
       ? 'Selecione o responsável pela tarefa'
       : 'Seu usuário só pode criar tarefas para si';
   }
 
   async function loadTaskAssignees(force = false) {
     const currentUser = getCurrentUserAssignee();
-    if (!isAdmin()) {
+    if (!canAdminTasks()) {
       taskAssigneesCache = currentUser ? [currentUser] : [];
       renderTaskAssigneeOptions();
       return;
@@ -2187,6 +2950,81 @@
       || task.source_conversation_id
       || task.conversation_id
       || 'Lead';
+  }
+
+  function getDefaultTaskDueValue() {
+    const date = new Date();
+    date.setDate(date.getDate() + 1);
+    date.setHours(9, 0, 0, 0);
+    const pad = value => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T09:00`;
+  }
+
+  function getTaskConversationUrl(task) {
+    if (!task) return '';
+
+    const platform = task.source_platform || getPlatform();
+    if (platform === 'travel_flow') {
+      const conversationId = task.conversation_id || task.source_conversation_id || '';
+      if (!conversationId) return '';
+
+      const baseUrl = window.location.hostname === TRAVEL_FLOW_HOST
+        ? window.location.href
+        : `https://${TRAVEL_FLOW_HOST}/atendimento-web`;
+      const url = new URL(baseUrl);
+      url.searchParams.set('conversationId', conversationId);
+      return url.toString();
+    }
+
+    if (platform === 'whatsapp_web' && task.lead_phone) {
+      return `https://web.whatsapp.com/send?phone=${encodeURIComponent(normalizePhone(task.lead_phone))}`;
+    }
+
+    return '';
+  }
+
+  function openTaskConversation(task) {
+    const url = getTaskConversationUrl(task);
+    if (!url) return false;
+    window.location.href = url;
+    return true;
+  }
+
+  function openTasksTab() {
+    const tab = document.querySelector(`#${PANEL_ID} .tfq-tab[data-tab="tarefas"]`);
+    if (tab) tab.click();
+  }
+
+  function setTaskSectionsState(activeSection = 'overview') {
+    const sections = {
+      overview: document.getElementById('tfq-task-overview-section'),
+      lead: document.getElementById('tfq-current-tasks-section'),
+      form: document.getElementById('tfq-task-form-section')
+    };
+
+    Object.entries(sections).forEach(([key, section]) => {
+      if (section) section.open = key === activeSection;
+    });
+  }
+
+  function scrollFocusedTaskIntoView() {
+    if (!focusedTaskId) return;
+
+    window.setTimeout(() => {
+      const item = document.querySelector(`#${PANEL_ID} .tfq-task-item[data-task-id="${focusedTaskId}"]`);
+      if (item) item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 120);
+  }
+
+  function focusTaskInPanel(task) {
+    if (!task) return;
+
+    focusedTaskId = Number(task.id || 0);
+    focusTaskNavigationPending = true;
+    openTasksTab();
+    setTaskSectionsState('lead');
+    renderTasksList();
+    scrollFocusedTaskIntoView();
   }
 
   function getTaskIdentityPayload(task) {
@@ -2264,7 +3102,7 @@
 
     if (title) title.value = '';
     if (negocio) negocio.value = editingId > 0 ? String(editingId) : '';
-    if (due) due.value = '';
+    if (due) due.value = getDefaultTaskDueValue();
     if (priority) priority.value = 'normal';
     if (responsavel) renderTaskAssigneeOptions(CURRENT_USER ? String(CURRENT_USER.id || '') : '');
     if (notes) notes.value = '';
@@ -2306,8 +3144,9 @@
     const countEl = document.getElementById('tfq-task-tab-count');
 
     if (countEl) {
-      countEl.textContent = pending.length > 0 ? String(pending.length) : '';
-      countEl.classList.toggle('tfq-hidden', pending.length === 0);
+      countEl.textContent = overdue.length > 0 ? String(overdue.length) : '';
+      countEl.classList.toggle('tfq-hidden', overdue.length === 0);
+      countEl.title = overdue.length > 0 ? `${overdue.length} tarefa(s) atrasada(s) neste lead` : '';
     }
 
     if (!summaryEl) return;
@@ -2327,18 +3166,27 @@
     }
 
     summaryEl.innerHTML = `
-      <button class="tfq-task-summary-btn tfq-task-summary-${tone}" id="tfq-open-tasks-tab" type="button">
+      <div class="tfq-task-summary-btn tfq-task-summary-label tfq-task-summary-${tone}" id="tfq-open-tasks-tab">
         ${escapeHtml(message)}
-      </button>
+      </div>
+      ${pending.length > 0 ? `
+        <div class="tfq-business-task-list">
+          ${pending.slice(0, 3).map(task => `
+            <button class="tfq-business-task-link" data-task-id="${Number(task.id)}" type="button">
+              <strong>${escapeHtml(task.title || 'Tarefa sem título')}</strong>
+              <span>${escapeHtml(formatTaskDue(task.due_at))}</span>
+            </button>
+          `).join('')}
+        </div>
+      ` : ''}
     `;
 
-    const openBtn = document.getElementById('tfq-open-tasks-tab');
-    if (openBtn) {
-      openBtn.addEventListener('click', () => {
-        const tab = document.querySelector(`#${PANEL_ID} .tfq-tab[data-tab="tarefas"]`);
-        if (tab) tab.click();
+    summaryEl.querySelectorAll('.tfq-business-task-link').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const task = tasksCache.find(item => Number(item.id) === Number(btn.dataset.taskId));
+        if (task) focusTaskInPanel(task);
       });
-    }
+    });
   }
 
   function setTaskOverviewStatus(message, type = '') {
@@ -2349,7 +3197,7 @@
   }
 
   function getTaskOverviewScopeText() {
-    return isAdmin() ? 'na visão geral' : 'nas suas tarefas';
+    return canAdminTasks() ? 'na visão geral' : 'nas suas tarefas';
   }
 
   function getTaskOverviewStats() {
@@ -2395,7 +3243,7 @@
     const listEl = document.getElementById('tfq-task-overview-list');
     if (!statsEl || !listEl) return;
 
-    if (titleEl) titleEl.textContent = isAdmin() ? 'Visão geral de tarefas' : 'Minhas tarefas';
+    if (titleEl) titleEl.textContent = canAdminTasks() ? 'Visão geral de tarefas' : 'Minhas tarefas';
 
     const stats = getTaskOverviewStats();
     const filters = [
@@ -2453,6 +3301,13 @@
       btn.addEventListener('click', () => {
         const task = taskOverviewCache.find(item => Number(item.id) === Number(btn.dataset.id));
         runTaskAction(btn.dataset.action, Number(btn.dataset.id), task || null);
+      });
+    });
+
+    listEl.querySelectorAll('.tfq-task-lead-link').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const task = taskOverviewCache.find(item => Number(item.id) === Number(btn.dataset.taskId));
+        if (task) openTaskConversation(task);
       });
     });
   }
@@ -2617,7 +3472,7 @@
       .map(group => `
         <div class="tfq-task-group">
           <h4>${escapeHtml(group.title)}</h4>
-          ${group.tasks.map(renderTaskItem).join('')}
+          ${group.tasks.map(task => renderTaskItem(task, { showLead: true })).join('')}
         </div>
       `).join('');
 
@@ -2629,8 +3484,20 @@
     });
 
     listEl.querySelectorAll('.tfq-task-action').forEach(btn => {
-      btn.addEventListener('click', () => runTaskAction(btn.dataset.action, Number(btn.dataset.id)));
+      btn.addEventListener('click', () => {
+        const task = tasksCache.find(item => Number(item.id) === Number(btn.dataset.id));
+        runTaskAction(btn.dataset.action, Number(btn.dataset.id), task || null);
+      });
     });
+
+    listEl.querySelectorAll('.tfq-task-lead-link').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const task = tasksCache.find(item => Number(item.id) === Number(btn.dataset.taskId));
+        if (task) openTaskConversation(task);
+      });
+    });
+
+    scrollFocusedTaskIntoView();
   }
 
   function renderTaskItem(task, options = {}) {
@@ -2643,8 +3510,8 @@
       : 'Lead';
     const overdue = isTaskOverdue(task);
     const priority = task.priority || 'normal';
-    const canWrite = canEdit();
-    const canAdminTask = isAdmin();
+    const canWrite = canEditTasks();
+    const canAdminTask = canAdminTasks();
     const status = task.status || 'pendente';
     const canEditTask = canWrite && (!showLead || taskMatchesCurrentContext(task));
     const editTitle = canEditTask
@@ -2656,10 +3523,13 @@
       getTaskAssigneeLabel(task),
       negocioLabel
     ];
+    const conversationUrl = getTaskConversationUrl(task);
+    const leadLabel = getTaskLeadLabel(task);
+    const leadLink = showLead
+      ? `<button class="tfq-task-lead-link" data-task-id="${Number(task.id)}" type="button" ${conversationUrl ? '' : 'disabled'}>${escapeHtml(leadLabel)}</button>`
+      : '';
 
-    if (showLead) {
-      metaItems.unshift(`Lead: ${getTaskLeadLabel(task)}`);
-    }
+    const isFocusedTask = focusedTaskId > 0 && Number(task.id) === Number(focusedTaskId);
 
     const primaryAction = status === 'pendente'
       ? `<button class="tfq-mini-btn ${actionClass}" data-action="complete" data-id="${Number(task.id)}" ${canWrite ? '' : 'disabled'}>Concluir</button>`
@@ -2670,8 +3540,9 @@
       : '';
 
     return `
-      <div class="tfq-task-item tfq-task-priority-${escapeHtml(priority)} ${overdue ? 'tfq-task-overdue' : ''}">
+      <div class="tfq-task-item tfq-task-priority-${escapeHtml(priority)} ${overdue ? 'tfq-task-overdue' : ''} ${isFocusedTask ? 'tfq-task-focused' : ''}" data-task-id="${Number(task.id)}">
         <div class="tfq-task-main">
+          ${leadLink}
           <div class="tfq-task-title-row">
             <strong>${escapeHtml(task.title || 'Tarefa sem título')}</strong>
             <span class="tfq-task-pill">${escapeHtml(priorityLabel(priority))}</span>
@@ -2693,7 +3564,7 @@
   }
 
   async function saveTask() {
-    if (!canEdit()) {
+    if (!canEditTasks()) {
       setTaskStatus('Seu usuário não tem permissão para salvar tarefas.', 'error');
       return;
     }
@@ -2743,11 +3614,11 @@
     };
 
     if (!id || !labels[action]) return;
-    if (['archive', 'delete'].includes(action) && !isAdmin()) {
+    if (['archive', 'delete'].includes(action) && !canAdminTasks()) {
       setTaskStatus('Somente administradores podem arquivar ou excluir tarefas.', 'error');
       return;
     }
-    if (!['archive', 'delete'].includes(action) && !canEdit()) {
+    if (!['archive', 'delete'].includes(action) && !canEditTasks()) {
       setTaskStatus('Seu usuário não tem permissão para alterar tarefas.', 'error');
       return;
     }
@@ -2768,6 +3639,11 @@
       });
 
       if (editingTaskId === id) clearTaskForm();
+      if (action === 'complete' || action === 'cancel' || action === 'archive' || action === 'delete') {
+        tasksCache = tasksCache.filter(item => Number(item.id) !== Number(id));
+        updateTaskSummary();
+        renderTasksList();
+      }
       await loadTasks(true);
       await loadTaskOverview(true);
       setTaskStatus(result.message || 'Tarefa atualizada.', 'success');
@@ -2855,8 +3731,9 @@
                 <h3 id="tfq-form-title">Novo negócio</h3>
                 <div id="tfq-editing-badge" class="tfq-editing-badge"></div>
               </div>
+              <button class="tfq-mini-btn tfq-hidden" id="tfq-edit-negocio" type="button">Editar</button>
             </div>
-            <div class="tfq-grid">
+            <div class="tfq-grid" id="tfq-negocio-form-grid">
               ${fields.map(createField).join('')}
             </div>
             <div class="tfq-actions">
@@ -2872,86 +3749,94 @@
 
         <!-- ABA TAREFAS -->
         <div id="tfq-tab-tarefas" class="tfq-tab-pane tfq-tab-pane-hidden">
-          <section class="tfq-card">
-            <h3 id="tfq-task-overview-title">Visão geral de tarefas</h3>
-            <div id="tfq-task-overview-stats" class="tfq-task-overview-stats"></div>
-            <div id="tfq-task-overview-list" class="tfq-task-overview-list"></div>
-            <div id="tfq-task-overview-status"></div>
-          </section>
-
-          <section class="tfq-card">
-            <h3>Tarefas do lead atual</h3>
-            <div id="tfq-tasks-list" style="margin-top:10px;"></div>
-          </section>
-
-          <section class="tfq-card">
-            <div class="tfq-section-head">
-              <div>
-                <h3 id="tfq-task-form-title">Nova tarefa</h3>
-                <div id="tfq-task-editing-badge" class="tfq-editing-badge"></div>
-              </div>
+          <details class="tfq-card tfq-admin-section tfq-task-section" id="tfq-task-overview-section" open>
+            <summary class="tfq-admin-summary">
+              <span id="tfq-task-overview-title">Visão geral de tarefas</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <div id="tfq-task-overview-stats" class="tfq-task-overview-stats"></div>
+              <div id="tfq-task-overview-list" class="tfq-task-overview-list"></div>
+              <div id="tfq-task-overview-status"></div>
             </div>
+          </details>
 
-            <div class="tfq-task-templates">
-              <button class="tfq-mini-btn tfq-task-template" data-title="Retornar contato" data-hours="4" type="button">Retornar</button>
-              <button class="tfq-mini-btn tfq-task-template" data-title="Enviar cotação" data-hours="24" type="button">Cotação</button>
-              <button class="tfq-mini-btn tfq-task-template" data-title="Confirmar pagamento" data-hours="24" type="button">Pagamento</button>
-              <button class="tfq-mini-btn tfq-task-template" data-title="Solicitar documentos" data-hours="24" type="button">Documentos</button>
-              <button class="tfq-mini-btn tfq-task-template" data-title="Fazer follow-up" data-hours="48" type="button">Follow-up</button>
+          <details class="tfq-card tfq-admin-section tfq-task-section" id="tfq-current-tasks-section">
+            <summary class="tfq-admin-summary">
+              <span>Tarefas do lead atual</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <div id="tfq-tasks-list"></div>
             </div>
+          </details>
 
-            <div class="tfq-grid">
-              <div class="tfq-row">
-                <label class="tfq-label" for="tfq-task-title">Título da tarefa</label>
-                <input class="tfq-input" id="tfq-task-title" type="text" placeholder="ex: Retornar contato" />
+          <details class="tfq-card tfq-admin-section tfq-task-section" id="tfq-task-form-section">
+            <summary class="tfq-admin-summary">
+              <span id="tfq-task-form-title">Nova tarefa</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <div id="tfq-task-editing-badge" class="tfq-editing-badge"></div>
+
+              <div class="tfq-task-templates">
+                <button class="tfq-mini-btn tfq-task-template" data-title="Retornar contato" data-hours="4" type="button">Retornar</button>
+                <button class="tfq-mini-btn tfq-task-template" data-title="Enviar cotação" data-hours="24" type="button">Cotação</button>
+                <button class="tfq-mini-btn tfq-task-template" data-title="Confirmar pagamento" data-hours="24" type="button">Pagamento</button>
+                <button class="tfq-mini-btn tfq-task-template" data-title="Solicitar documentos" data-hours="24" type="button">Documentos</button>
+                <button class="tfq-mini-btn tfq-task-template" data-title="Fazer follow-up" data-hours="48" type="button">Follow-up</button>
               </div>
 
-              <div class="tfq-row">
-                <label class="tfq-label" for="tfq-task-negocio">Negócio relacionado</label>
-                <select class="tfq-select" id="tfq-task-negocio">
-                  <option value="">Nenhum negócio específico</option>
-                </select>
+              <div class="tfq-grid">
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-task-title">Título da tarefa</label>
+                  <input class="tfq-input" id="tfq-task-title" type="text" placeholder="ex: Retornar contato" />
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-task-negocio">Negócio relacionado</label>
+                  <select class="tfq-select" id="tfq-task-negocio">
+                    <option value="">Nenhum negócio específico</option>
+                  </select>
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-task-due">Lembrete</label>
+                  <input class="tfq-input" id="tfq-task-due" type="datetime-local" />
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-task-priority">Prioridade</label>
+                  <select class="tfq-select" id="tfq-task-priority">
+                    <option value="baixa">Baixa</option>
+                    <option value="normal" selected>Normal</option>
+                    <option value="alta">Alta</option>
+                  </select>
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-task-assigned-user">Responsável</label>
+                  <select class="tfq-select" id="tfq-task-assigned-user">
+                    <option value="">Carregando usuários...</option>
+                  </select>
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-task-notes">Observação</label>
+                  <textarea class="tfq-textarea" id="tfq-task-notes" rows="3"></textarea>
+                </div>
               </div>
 
-              <div class="tfq-row">
-                <label class="tfq-label" for="tfq-task-due">Lembrete</label>
-                <input class="tfq-input" id="tfq-task-due" type="datetime-local" />
+              <div class="tfq-actions">
+                <button class="tfq-btn tfq-btn-primary" id="tfq-task-save" type="button">Salvar tarefa</button>
+                <button class="tfq-btn tfq-btn-secondary" id="tfq-task-clear" type="button">Limpar</button>
+                <button class="tfq-btn tfq-btn-secondary" id="tfq-task-reload" type="button">Recarregar</button>
               </div>
-
-              <div class="tfq-row">
-                <label class="tfq-label" for="tfq-task-priority">Prioridade</label>
-                <select class="tfq-select" id="tfq-task-priority">
-                  <option value="baixa">Baixa</option>
-                  <option value="normal" selected>Normal</option>
-                  <option value="alta">Alta</option>
-                </select>
-              </div>
-
-              <div class="tfq-row">
-                <label class="tfq-label" for="tfq-task-assigned-user">Responsável</label>
-                <select class="tfq-select" id="tfq-task-assigned-user">
-                  <option value="">Carregando usuários...</option>
-                </select>
-              </div>
-
-              <div class="tfq-row">
-                <label class="tfq-label" for="tfq-task-notes">Observação</label>
-                <textarea class="tfq-textarea" id="tfq-task-notes" rows="3"></textarea>
-              </div>
+              <div id="tfq-task-status"></div>
             </div>
-
-            <div class="tfq-actions">
-              <button class="tfq-btn tfq-btn-primary" id="tfq-task-save" type="button">Salvar tarefa</button>
-              <button class="tfq-btn tfq-btn-secondary" id="tfq-task-clear" type="button">Limpar</button>
-              <button class="tfq-btn tfq-btn-secondary" id="tfq-task-reload" type="button">Recarregar</button>
-            </div>
-            <div id="tfq-task-status"></div>
-          </section>
+          </details>
         </div>
 
         <!-- ABA ADMIN -->
         <div id="tfq-tab-usuarios" class="tfq-tab-pane tfq-tab-pane-hidden">
-          <details class="tfq-card tfq-admin-section" open>
+          <details class="tfq-card tfq-admin-section" data-admin-permission="admin.appearance.view" open>
             <summary class="tfq-admin-summary">
               <span>Botão flutuante</span>
             </summary>
@@ -2989,10 +3874,96 @@
                 <button class="tfq-btn tfq-btn-secondary" id="tfq-reset-toggle-appearance" type="button">Restaurar padrão</button>
               </div>
               <div id="tfq-toggle-appearance-status"></div>
+
             </div>
           </details>
 
-          <details class="tfq-card tfq-admin-section">
+
+          <details class="tfq-card tfq-admin-section" data-admin-permission="admin.window.view">
+            <summary class="tfq-admin-summary">
+              <span>Janela do Zap Negócios</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <div class="tfq-grid">
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-panel-slide-ms">Tempo do slide da janela (ms)</label>
+                  <div class="tfq-range-row">
+                    <input id="tfq-panel-slide-ms" type="range" min="0" max="800" step="10" />
+                    <input class="tfq-input" id="tfq-panel-slide-ms-number" type="number" min="0" max="800" step="10" />
+                  </div>
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-panel-rebuild-delay-ms">Pausa ao trocar conversa (ms)</label>
+                  <div class="tfq-range-row">
+                    <input id="tfq-panel-rebuild-delay-ms" type="range" min="0" max="600" step="10" />
+                    <input class="tfq-input" id="tfq-panel-rebuild-delay-ms-number" type="number" min="0" max="600" step="10" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="tfq-actions">
+                <button class="tfq-btn tfq-btn-primary" id="tfq-save-panel-settings" type="button">Salvar janela</button>
+                <button class="tfq-btn tfq-btn-secondary" id="tfq-reset-panel-settings" type="button">Restaurar padrão</button>
+              </div>
+              <div id="tfq-panel-settings-status"></div>
+            </div>
+          </details>
+
+          <details class="tfq-card tfq-admin-section" data-admin-permission="admin.notifications.view">
+            <summary class="tfq-admin-summary">
+              <span>Notificações</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <label class="tfq-check-row" for="tfq-notifications-enabled">
+                <input id="tfq-notifications-enabled" type="checkbox" />
+                Ativar lembretes de tarefas
+              </label>
+
+              <div class="tfq-grid">
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-notification-interval">Verificar tarefas a cada (minutos)</label>
+                  <input class="tfq-input" id="tfq-notification-interval" type="number" min="1" max="120" step="1" />
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-notification-lookahead">Avisar com antecedência de (minutos)</label>
+                  <input class="tfq-input" id="tfq-notification-lookahead" type="number" min="0" max="1440" step="5" />
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-notification-history-days">Evitar repetição por (dias)</label>
+                  <input class="tfq-input" id="tfq-notification-history-days" type="number" min="1" max="60" step="1" />
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-notification-normal-priority">Prioridade da notificação normal</label>
+                  <select class="tfq-select" id="tfq-notification-normal-priority">
+                    <option value="0">Baixa</option>
+                    <option value="1">Normal</option>
+                    <option value="2">Alta</option>
+                  </select>
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-notification-high-priority">Prioridade para tarefas altas</label>
+                  <select class="tfq-select" id="tfq-notification-high-priority">
+                    <option value="0">Baixa</option>
+                    <option value="1">Normal</option>
+                    <option value="2">Alta</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="tfq-actions">
+                <button class="tfq-btn tfq-btn-primary" id="tfq-save-notification-settings" type="button">Salvar notificações</button>
+                <button class="tfq-btn tfq-btn-secondary" id="tfq-reset-notification-settings" type="button">Restaurar padrão</button>
+              </div>
+              <div id="tfq-notification-settings-status"></div>
+            </div>
+          </details>
+
+          <details class="tfq-card tfq-admin-section" data-admin-permission="admin.fields.view">
             <summary class="tfq-admin-summary">
               <span>Campos personalizados</span>
             </summary>
@@ -3036,7 +4007,7 @@
             </div>
           </details>
 
-          <details class="tfq-card tfq-admin-section">
+          <details class="tfq-card tfq-admin-section" data-admin-permission="admin.users.view">
             <summary class="tfq-admin-summary">
               <span>Usuários e permissões</span>
             </summary>
@@ -3070,6 +4041,12 @@
               </div>
 
               <div class="tfq-admin-block">
+                <h3>Permissões por grupo</h3>
+                <div id="tfq-role-permissions-list" class="tfq-role-permissions-list" style="margin-top:10px;"></div>
+                <div id="tfq-role-permissions-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
+              </div>
+
+              <div class="tfq-admin-block">
                 <h3>Usuários</h3>
                 <div id="tfq-users-list" style="margin-top:10px;"></div>
                 <div id="tfq-users-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
@@ -3077,7 +4054,7 @@
             </div>
           </details>
 
-          <details class="tfq-card tfq-admin-section">
+          <details class="tfq-card tfq-admin-section" data-admin-permission="admin.audit.view">
             <summary class="tfq-admin-summary">
               <span>Backup e auditoria</span>
             </summary>
@@ -3093,30 +4070,51 @@
         </div>
 
       </div>
+      <footer id="tfq-footer">Zap Negócios - Por Ricardo Macari.</footer>
     `;
 
     document.body.appendChild(toggle);
     document.body.appendChild(panel);
-    loadUserConfig()
-      .then(loadToggleSettings)
-      .then(renderToggleAppearanceForm);
+    installNegocioEditGuard(panel);
+    Promise.resolve()
+      .then(() => userConfigLoaded ? undefined : loadUserConfig())
+      .then(() => toggleSettingsLoaded ? applyToggleSettings() : loadToggleSettings())
+      .then(() => panelSettingsLoaded ? applyPanelSettings() : loadPanelSettings())
+      .then(() => notificationSettingsLoaded ? undefined : loadNotificationSettings())
+      .then(() => {
+        renderToggleAppearanceForm();
+        renderPanelSettingsForm();
+        renderNotificationSettingsForm();
+      });
 
     async function openPanel() {
       panel.classList.add('tfq-open');
       toggle.setAttribute('aria-expanded', 'true');
 
-      await loadUserConfig();
-      await loadToggleSettings();
+      if (!userConfigLoaded) await loadUserConfig();
+      if (!toggleSettingsLoaded) {
+        await loadToggleSettings();
+      } else {
+        applyToggleSettings();
+      }
+      if (!panelSettingsLoaded) {
+        await loadPanelSettings();
+      } else {
+        applyPanelSettings();
+      }
+      if (!notificationSettingsLoaded) await loadNotificationSettings();
 
       const notConfiguredEl = document.getElementById('tfq-not-configured');
       const tabsEl          = document.getElementById('tfq-tabs');
       const bodyEl          = document.getElementById('tfq-body');
       const tabAdmin        = panel.querySelector('.tfq-tab[data-tab="usuarios"]');
+      const tabTasks        = panel.querySelector('.tfq-tab[data-tab="tarefas"]');
       const saveBtn         = document.getElementById('tfq-save');
       const taskSaveBtn     = document.getElementById('tfq-task-save');
       const includeDeletedRow = document.querySelector('label[for="tfq-include-deleted"]');
 
       if (!isConfigured()) {
+        panelRebuildContextKey = '';
         if (notConfiguredEl) notConfiguredEl.classList.remove('tfq-hidden');
         if (tabsEl)          tabsEl.classList.add('tfq-hidden');
         if (bodyEl)          bodyEl.classList.add('tfq-hidden');
@@ -3132,37 +4130,38 @@
         saveBtn.title = canEdit() ? 'Salvar negócio' : 'Seu usuário não tem permissão para salvar negócios';
       }
       if (taskSaveBtn) {
-        taskSaveBtn.disabled = !canEdit();
-        taskSaveBtn.title = canEdit() ? 'Salvar tarefa' : 'Seu usuário não tem permissão para salvar tarefas';
+        taskSaveBtn.disabled = !canEditTasks();
+        taskSaveBtn.title = canEditTasks() ? 'Salvar tarefa' : 'Seu usuário não tem permissão para salvar tarefas';
       }
 
-      if (tabAdmin) {
-        if (isAdmin()) {
-          tabAdmin.classList.remove('tfq-hidden');
-        } else {
-          tabAdmin.classList.add('tfq-hidden');
-          const tabNegocios = panel.querySelector('.tfq-tab[data-tab="negocios"]');
-          if (tabNegocios) tabNegocios.click();
-        }
+      if (tabTasks) tabTasks.classList.toggle('tfq-hidden', !canViewTasks());
+      applyAdminSectionPermissions();
+      if (tabAdmin && !canAccessAdmin()) {
+        const tabNegocios = panel.querySelector('.tfq-tab[data-tab="negocios"]');
+        if (tabNegocios) tabNegocios.click();
       }
 
       const deleteBtn = document.getElementById('tfq-delete');
-      if (deleteBtn && !isAdmin()) {
+      if (deleteBtn && !canDeleteNegocio()) {
         deleteBtn.disabled = true;
-        deleteBtn.title = 'Somente administradores podem excluir negócios';
+        deleteBtn.title = 'Seu usuário não tem permissão para excluir negócios';
       }
       if (includeDeletedRow) {
-        includeDeletedRow.classList.toggle('tfq-hidden', !isAdmin());
+        includeDeletedRow.classList.toggle('tfq-hidden', !(canDeleteNegocio() || canRestoreNegocio()));
       }
 
       updateUserRoleOptions();
       renderToggleAppearanceForm();
+      renderPanelSettingsForm();
+      renderNotificationSettingsForm();
 
-      await loadFormFields();
+      if (!formFieldsLoadedFromServer) await loadFormFields();
+      negocioLoadingLocked = true;
       renderFormFields();
       clearTaskForm();
       await loadNegocios(true, true);
       loadPanelSecondaryData();
+      panelRebuildContextKey = '';
     }
 
     function closePanel() {
@@ -3190,16 +4189,32 @@
         const activePane = document.getElementById(`tfq-tab-${target}`);
         if (activePane) activePane.classList.remove('tfq-tab-pane-hidden');
 
+        if (target === 'tarefas' && !canViewTasks()) return;
         if (target === 'tarefas') {
+          if (focusTaskNavigationPending && focusedTaskId > 0) {
+            setTaskSectionsState('lead');
+          } else {
+            focusedTaskId = 0;
+            setTaskSectionsState('overview');
+          }
           loadTaskAssignees();
-          loadTasks(true);
+          loadTasks(true).finally(() => {
+            if (focusTaskNavigationPending && focusedTaskId > 0) {
+              setTaskSectionsState('lead');
+              scrollFocusedTaskIntoView();
+              focusTaskNavigationPending = false;
+            }
+          });
           loadTaskOverview(true);
         }
         if (target === 'usuarios') {
-          renderToggleAppearanceForm();
-          loadFields();
-          loadUsers();
-          loadAuditLog();
+          applyAdminSectionPermissions();
+          if (hasPermission('admin.appearance.view', 'admin') || hasPermission('admin.appearance.edit', 'admin')) renderToggleAppearanceForm();
+          if (hasPermission('admin.window.view', 'admin') || hasPermission('admin.window.edit', 'admin')) renderPanelSettingsForm();
+          if (hasPermission('admin.notifications.view', 'admin') || hasPermission('admin.notifications.edit', 'admin')) renderNotificationSettingsForm();
+          if (hasPermission('admin.fields.view', 'admin') || hasPermission('admin.fields.edit', 'admin')) loadFields();
+          if (canViewUsersAdmin()) loadUsers();
+          if (hasPermission('admin.audit.view', 'admin')) loadAuditLog();
         }
       });
     });
@@ -3216,6 +4231,7 @@
 
     panel.querySelector('#tfq-close').addEventListener('click', closePanel);
     panel.querySelector('#tfq-save').addEventListener('click', saveNegocio);
+    panel.querySelector('#tfq-edit-negocio').addEventListener('click', editSelectedNegocio);
     panel.querySelector('#tfq-delete').addEventListener('click', deleteNegocio);
     panel.querySelector('#tfq-restore').addEventListener('click', restoreNegocio);
     panel.querySelector('#tfq-include-deleted').addEventListener('change', () => {
@@ -3246,13 +4262,7 @@
       loadTasks(true);
       loadTaskOverview(true);
     });
-    panel.querySelector('#tfq-cancel').addEventListener('click', () => {
-      if (!confirmDiscardChanges()) return;
-      setEditingState(0);
-      const dd = getNegociosDropdown();
-      if (dd) dd.value = '';
-      setStatus('Formulário limpo.', '');
-    });
+    panel.querySelector('#tfq-cancel').addEventListener('click', cancelNegocioEdit);
 
     panel.querySelector('#tfq-add-field-btn').addEventListener('click', addField);
     panel.querySelector('#tfq-add-user-btn').addEventListener('click', addUser);
@@ -3260,6 +4270,10 @@
     panel.querySelector('#tfq-reload-audit').addEventListener('click', loadAuditLog);
     panel.querySelector('#tfq-save-toggle-appearance').addEventListener('click', saveToggleAppearance);
     panel.querySelector('#tfq-reset-toggle-appearance').addEventListener('click', resetToggleAppearance);
+    panel.querySelector('#tfq-save-panel-settings').addEventListener('click', savePanelSettingsFromForm);
+    panel.querySelector('#tfq-reset-panel-settings').addEventListener('click', resetPanelSettings);
+    panel.querySelector('#tfq-save-notification-settings').addEventListener('click', saveNotificationSettingsFromForm);
+    panel.querySelector('#tfq-reset-notification-settings').addEventListener('click', resetNotificationSettings);
     panel.querySelector('#tfq-toggle-label').addEventListener('input', previewToggleAppearance);
     panel.querySelector('#tfq-toggle-color').addEventListener('input', previewToggleAppearance);
     panel.querySelector('#tfq-toggle-x').addEventListener('input', e => {
@@ -3281,6 +4295,26 @@
       const rangeInput = panel.querySelector('#tfq-toggle-y');
       if (rangeInput) rangeInput.value = e.target.value;
       previewToggleAppearance();
+    });
+    panel.querySelector('#tfq-panel-slide-ms').addEventListener('input', e => {
+      const numberInput = panel.querySelector('#tfq-panel-slide-ms-number');
+      if (numberInput) numberInput.value = e.target.value;
+      previewPanelSettings();
+    });
+    panel.querySelector('#tfq-panel-slide-ms-number').addEventListener('input', e => {
+      const rangeInput = panel.querySelector('#tfq-panel-slide-ms');
+      if (rangeInput) rangeInput.value = e.target.value;
+      previewPanelSettings();
+    });
+    panel.querySelector('#tfq-panel-rebuild-delay-ms').addEventListener('input', e => {
+      const numberInput = panel.querySelector('#tfq-panel-rebuild-delay-ms-number');
+      if (numberInput) numberInput.value = e.target.value;
+      previewPanelSettings();
+    });
+    panel.querySelector('#tfq-panel-rebuild-delay-ms-number').addEventListener('input', e => {
+      const rangeInput = panel.querySelector('#tfq-panel-rebuild-delay-ms');
+      if (rangeInput) rangeInput.value = e.target.value;
+      previewPanelSettings();
     });
     panel.querySelector('#tfq-new-field-name').addEventListener('keydown', e => {
       if (e.key === 'Enter') addField();
@@ -3310,18 +4344,12 @@
 
       const panel = getPanel();
       if (panel && panel.classList.contains('tfq-open') && context.isValid) {
-        negociosCache         = [];
-        tasksCache            = [];
-        currentConversationId = '';
-        setEditingState(0);
-        clearTaskForm();
-        updatePanelTitle();
-        loadNegocios(true, true); // autoSelect: troca de conversa
-        loadTasks(true);
+        if (rebuildOpenPanelForConversation(currentId)) return;
       }
     }
 
     if (hasValidConversation()) {
+      if (panelRebuildContextKey) return;
       if (!panelInitialized) renderPanel();
     } else {
       if (panelInitialized)  removePanel();
@@ -3333,7 +4361,7 @@
       removePanel();
       return;
     }
-    if (panelInitialized) return;
+    if (panelInitialized || panelRebuildContextKey) return;
     renderPanel();
   }
 
@@ -3347,18 +4375,23 @@
     }
 
     ensurePanel();
+    if (panelRebuildContextKey) return;
 
     if (getConversationIdDisplay()) updateConversationIdUI();
     updatePanelTitle();
 
-    if (force || contextKey !== currentConversationId) {
-      const isConversationChange = contextKey !== currentConversationId;
+    const isConversationChange = contextKey !== currentConversationId;
+    if (isConversationChange && rebuildOpenPanelForConversation(contextKey)) return;
+
+    if (force || isConversationChange) {
       currentConversationId = '';
       negociosCache         = [];
       tasksCache            = [];
-      setEditingState(0);
+      beginNegocioLoadingState();
       clearTaskForm();
-      loadNegocios(true, isConversationChange); // autoSelect só em troca real de conversa
+      loadNegocios(true, isConversationChange).finally(() => {
+        if (isConversationChange) scheduleCurrentNegocioViewModeLock();
+      }); // autoSelect só em troca real de conversa
       loadTasks(true);
     }
   }
@@ -3412,7 +4445,7 @@
       lastCheckedConversationId = getContextKey();
       checkVisibility();
       startVisibilityCheck();
-      scheduleSync(true);
+      if (!panelRebuildContextKey) scheduleSync(true);
     });
   } else {
     lastCheckedConversationId = getContextKey();
@@ -3426,7 +4459,7 @@
   window.addEventListener('tfq:conversation-change', (e) => {
     const leadName = e.detail && e.detail.leadName ? e.detail.leadName : null;
     checkVisibility();
-    scheduleSync(true);
+    if (!panelRebuildContextKey) scheduleSync(true);
     // Atualiza o título imediatamente com o nome capturado pelo bridge,
     // antes mesmo do loadNegocios terminar
     if (leadName) updatePanelTitle(leadName);
@@ -3434,7 +4467,7 @@
 
   window.addEventListener('focus', () => {
     checkVisibility();
-    scheduleSync(false);
+    if (!panelRebuildContextKey) scheduleSync(false);
   });
 
   window.addEventListener('beforeunload', event => {

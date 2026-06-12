@@ -24,7 +24,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Excluir é uma ação sensível: exige usuário admin ou owner.
-$currentUser = requireUser('admin');
+$currentUser = requirePermission('negocio.delete');
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY

@@ -18,7 +18,7 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-$currentUser = requireUser('viewer');
+$currentUser = requirePermission('negocio.view');
 
 $conversationId       = trim($_GET['conversation_id'] ?? '');
 $leadPhone            = normalizeLeadPhone($_GET['lead_phone'] ?? '');

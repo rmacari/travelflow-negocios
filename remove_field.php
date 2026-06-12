@@ -32,7 +32,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Gerenciar campos exige usuário admin ou owner.
-$currentUser = requireUser('admin');
+$currentUser = requirePermission('admin.fields.edit');
 
 // ---------------------------------------------------------------------------
 // CAMPOS PADRÃO PROTEGIDOS

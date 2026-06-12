@@ -211,6 +211,261 @@ function userHasRole($user, $minRole)
     return getRoleLevel($user['role'] ?? '') >= getRoleLevel($minRole);
 }
 
+function getDefaultRolePermissions()
+{
+    return [
+        'viewer' => [
+            'negocio.view',
+            'tasks.view',
+        ],
+        'editor' => [
+            'negocio.view',
+            'negocio.edit',
+            'tasks.view',
+            'tasks.edit',
+        ],
+        'admin' => [
+            'negocio.view',
+            'negocio.edit',
+            'negocio.delete',
+            'negocio.restore',
+            'tasks.view',
+            'tasks.edit',
+            'tasks.admin',
+            'admin.access',
+            'admin.appearance.view',
+            'admin.appearance.edit',
+            'admin.window.view',
+            'admin.window.edit',
+            'admin.notifications.view',
+            'admin.notifications.edit',
+            'admin.fields.view',
+            'admin.fields.edit',
+            'admin.users.view',
+            'admin.users.edit',
+            'admin.audit.view',
+            'admin.backup.edit',
+        ],
+        'owner' => ['*'],
+    ];
+}
+
+function expandLegacyPermission($permission)
+{
+    $map = [
+        'admin.appearance' => ['admin.appearance.view', 'admin.appearance.edit'],
+        'admin.window' => ['admin.window.view', 'admin.window.edit'],
+        'admin.notifications' => ['admin.notifications.view', 'admin.notifications.edit'],
+        'admin.fields' => ['admin.fields.view', 'admin.fields.edit'],
+        'admin.users' => ['admin.users.view', 'admin.users.edit'],
+        'admin.audit' => ['admin.audit.view'],
+        'admin.backup' => ['admin.backup.edit'],
+    ];
+
+    return $map[$permission] ?? [$permission];
+}
+
+function normalizePermissionList($permissions)
+{
+    if (!is_array($permissions)) {
+        return [];
+    }
+
+    $allowed = getAllPermissionKeys();
+    $clean = [];
+    foreach ($permissions as $permission) {
+        $permission = trim((string) $permission);
+        foreach (expandLegacyPermission($permission) as $expanded) {
+            if ($expanded === '*' || in_array($expanded, $allowed, true)) {
+                $clean[$expanded] = true;
+            }
+        }
+    }
+
+    return array_keys($clean);
+}
+
+function getAllPermissionKeys()
+{
+    return [
+        'negocio.view',
+        'negocio.edit',
+        'negocio.delete',
+        'negocio.restore',
+        'tasks.view',
+        'tasks.edit',
+        'tasks.admin',
+        'admin.access',
+        'admin.appearance.view',
+        'admin.appearance.edit',
+        'admin.window.view',
+        'admin.window.edit',
+        'admin.notifications.view',
+        'admin.notifications.edit',
+        'admin.fields.view',
+        'admin.fields.edit',
+        'admin.users.view',
+        'admin.users.edit',
+        'admin.audit.view',
+        'admin.backup.edit',
+        // Permissões legadas aceitas para compatibilidade com instalações anteriores.
+        'admin.appearance',
+        'admin.window',
+        'admin.notifications',
+        'admin.fields',
+        'admin.users',
+        'admin.audit',
+        'admin.backup',
+    ];
+}
+
+function getPermissionCatalog()
+{
+    return [
+        ['key' => 'negocio.view', 'label' => 'Ver negócios'],
+        ['key' => 'negocio.edit', 'label' => 'Criar e editar negócios'],
+        ['key' => 'negocio.delete', 'label' => 'Excluir negócios'],
+        ['key' => 'negocio.restore', 'label' => 'Restaurar negócios'],
+        ['key' => 'tasks.view', 'label' => 'Ver tarefas'],
+        ['key' => 'tasks.edit', 'label' => 'Criar e alterar tarefas'],
+        ['key' => 'tasks.admin', 'label' => 'Gerenciar tarefas de todos'],
+        ['key' => 'admin.access', 'label' => 'Admin: acessar aba'],
+        ['key' => 'admin.appearance.view', 'label' => 'Admin: ver botão flutuante'],
+        ['key' => 'admin.appearance.edit', 'label' => 'Admin: editar botão flutuante'],
+        ['key' => 'admin.window.view', 'label' => 'Admin: ver janela'],
+        ['key' => 'admin.window.edit', 'label' => 'Admin: editar janela'],
+        ['key' => 'admin.notifications.view', 'label' => 'Admin: ver notificações'],
+        ['key' => 'admin.notifications.edit', 'label' => 'Admin: editar notificações'],
+        ['key' => 'admin.fields.view', 'label' => 'Admin: ver campos personalizados'],
+        ['key' => 'admin.fields.edit', 'label' => 'Admin: editar campos personalizados'],
+        ['key' => 'admin.users.view', 'label' => 'Admin: ver usuários e permissões'],
+        ['key' => 'admin.users.edit', 'label' => 'Admin: editar usuários e permissões'],
+        ['key' => 'admin.audit.view', 'label' => 'Admin: ver auditoria'],
+        ['key' => 'admin.backup.edit', 'label' => 'Admin: baixar backup'],
+    ];
+}
+
+function permissionTableExists()
+{
+    return tableExists('zap_role_permissions');
+}
+
+function fetchRolePermissionMap()
+{
+    $defaults = getDefaultRolePermissions();
+    if (!permissionTableExists()) {
+        return $defaults;
+    }
+
+    try {
+        $stmt = getDb()->query('SELECT role, permissions_json FROM zap_role_permissions');
+        foreach ($stmt->fetchAll() as $row) {
+            $role = normalizeUserRole($row['role'] ?? '');
+            $decoded = json_decode((string) ($row['permissions_json'] ?? '[]'), true);
+            if (is_array($decoded)) {
+                $defaults[$role] = normalizePermissionList($decoded);
+            }
+        }
+    } catch (Throwable $e) {
+        return $defaults;
+    }
+
+    $defaults['owner'] = ['*'];
+    return $defaults;
+}
+
+function getRolePermissions($role)
+{
+    $role = normalizeUserRole($role);
+    $map = fetchRolePermissionMap();
+    return $map[$role] ?? [];
+}
+
+function userPermissionTableExists()
+{
+    return tableExists('zap_user_permissions');
+}
+
+function fetchUserPermissionMap()
+{
+    if (!userPermissionTableExists()) {
+        return [];
+    }
+
+    $map = [];
+    try {
+        $stmt = getDb()->query('SELECT user_id, permissions_json FROM zap_user_permissions');
+        foreach ($stmt->fetchAll() as $row) {
+            $decoded = json_decode((string) ($row['permissions_json'] ?? '[]'), true);
+            $map[(int) $row['user_id']] = normalizePermissionList(is_array($decoded) ? $decoded : []);
+        }
+    } catch (Throwable $e) {
+        return [];
+    }
+
+    return $map;
+}
+
+function getUserPermissionOverride($userId)
+{
+    if (!userPermissionTableExists()) {
+        return null;
+    }
+
+    try {
+        $stmt = getDb()->prepare('SELECT permissions_json FROM zap_user_permissions WHERE user_id = :user_id LIMIT 1');
+        $stmt->execute(['user_id' => (int) $userId]);
+        $row = $stmt->fetch();
+        if (!$row) return null;
+        $decoded = json_decode((string) ($row['permissions_json'] ?? '[]'), true);
+        return normalizePermissionList(is_array($decoded) ? $decoded : []);
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function userHasPermission($user, $permission)
+{
+    $role = normalizeUserRole($user['role'] ?? 'viewer');
+    if ($role === 'owner') {
+        return true;
+    }
+
+    $permissions = $user['permissions'] ?? getRolePermissions($role);
+    if (in_array('*', $permissions, true) || in_array($permission, $permissions, true)) {
+        return true;
+    }
+    foreach (expandLegacyPermission($permission) as $expanded) {
+        if (in_array($expanded, $permissions, true)) return true;
+    }
+    return false;
+}
+
+function attachUserPermissions($user)
+{
+    $user['role'] = normalizeUserRole($user['role'] ?? 'viewer');
+    $user['role_level'] = getRoleLevel($user['role']);
+    $override = getUserPermissionOverride((int) ($user['id'] ?? 0));
+    $user['permissions'] = is_array($override) ? $override : getRolePermissions($user['role']);
+    $user['permission_source'] = is_array($override) ? 'user' : 'role';
+    if ($user['role'] === 'owner') {
+        $user['permissions'] = ['*'];
+        $user['permission_source'] = 'owner';
+    }
+    return $user;
+}
+
+function requirePermission($permission)
+{
+    $user = requireUser('viewer');
+    if (!userHasPermission($user, $permission)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Permissão insuficiente para esta ação.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    return $user;
+}
+
 function getBearerToken()
 {
     $header = $_SERVER['HTTP_AUTHORIZATION']
@@ -291,8 +546,7 @@ function requireUser($minRole = 'viewer')
 
     $user['id'] = (int) $user['id'];
     $user['session_id'] = (int) $user['session_id'];
-    $user['role'] = normalizeUserRole($user['role']);
-    $user['role_level'] = getRoleLevel($user['role']);
+    $user = attachUserPermissions($user);
 
     if (!userHasRole($user, $minRole)) {
         http_response_code(403);
@@ -312,7 +566,9 @@ function publicUser($user)
         'id'        => (int) $user['id'],
         'username'  => $user['username'],
         'full_name' => $user['full_name'] ?? '',
-        'role'      => normalizeUserRole($user['role'] ?? 'viewer'),
+        'role'        => normalizeUserRole($user['role'] ?? 'viewer'),
+        'permissions' => $user['permissions'] ?? getRolePermissions($user['role'] ?? 'viewer'),
+        'permission_source' => $user['permission_source'] ?? 'role',
     ];
 }
 
@@ -338,11 +594,15 @@ function canManageTargetUser($actor, $targetRole, $targetUserId = 0)
     $actorRole = normalizeUserRole($actor['role'] ?? 'viewer');
     $targetRole = normalizeUserRole($targetRole);
 
-    if ($actorRole === 'owner') {
-        return true;
+    if (in_array($targetRole, ['admin', 'owner'], true)) {
+        return false;
     }
 
-    if ($actorRole === 'admin') {
+    if ($actorRole === 'owner') {
+        return in_array($targetRole, ['viewer', 'editor'], true);
+    }
+
+    if (userHasPermission($actor, 'admin.users.edit')) {
         return in_array($targetRole, ['viewer', 'editor'], true);
     }
 

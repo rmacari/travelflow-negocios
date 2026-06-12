@@ -10,7 +10,7 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-$currentUser = requireUser('viewer');
+$currentUser = requirePermission('tasks.view');
 
 function ensureTaskTable()
 {
@@ -143,7 +143,7 @@ function buildTaskIdentityWhere($context, $alias = 't')
 
 function addTaskUserScope(&$where, &$params, $currentUser, $alias = 't')
 {
-    if (userHasRole($currentUser, 'admin')) {
+    if (userHasPermission($currentUser, 'tasks.admin')) {
         return;
     }
 
@@ -201,7 +201,7 @@ function getUserDisplayName($user)
 
 function resolveTaskAssignee($assignedUserId, $currentUser)
 {
-    if (!userHasRole($currentUser, 'admin')) {
+    if (!userHasPermission($currentUser, 'tasks.admin')) {
         return $currentUser;
     }
 
@@ -304,7 +304,7 @@ try {
 
         if ($action === 'overview') {
             $limit = max(20, min(500, (int) ($_GET['limit'] ?? 200)));
-            $includeArchived = !empty($_GET['include_archived']) && userHasRole($currentUser, 'admin');
+            $includeArchived = !empty($_GET['include_archived']) && userHasPermission($currentUser, 'tasks.admin');
             $status = strtolower(trim((string) ($_GET['status'] ?? '')));
             $where = [];
             $params = [];
@@ -337,14 +337,14 @@ try {
             echo json_encode([
                 'success' => true,
                 'tasks' => $stmt->fetchAll(),
-                'scope' => userHasRole($currentUser, 'admin') ? 'all' : 'own',
+                'scope' => userHasPermission($currentUser, 'tasks.admin') ? 'all' : 'own',
             ], JSON_UNESCAPED_UNICODE);
             exit;
         }
 
         $context = getTaskContextFromArray($_GET);
         [$where, $params] = buildTaskIdentityWhere($context, 't');
-        $includeArchived = !empty($_GET['include_archived']) && userHasRole($currentUser, 'admin');
+        $includeArchived = !empty($_GET['include_archived']) && userHasPermission($currentUser, 'tasks.admin');
         $scopeWhere = [];
         addTaskUserScope($scopeWhere, $params, $currentUser, 't');
 
@@ -374,7 +374,7 @@ try {
         echo json_encode([
             'success' => true,
             'tasks' => $stmt->fetchAll(),
-            'scope' => userHasRole($currentUser, 'admin') ? 'all' : 'own',
+            'scope' => userHasPermission($currentUser, 'tasks.admin') ? 'all' : 'own',
         ], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -382,10 +382,10 @@ try {
     $data = readTaskPayload();
     $action = $data['action'] ?? 'create';
 
-    if (in_array($action, ['create', 'update', 'complete', 'reopen', 'cancel'], true) && !userHasRole($currentUser, 'editor')) {
+    if (in_array($action, ['create', 'update', 'complete', 'reopen', 'cancel'], true) && !userHasPermission($currentUser, 'tasks.edit')) {
         denyTaskPermission();
     }
-    if (in_array($action, ['archive', 'delete'], true) && !userHasRole($currentUser, 'admin')) {
+    if (in_array($action, ['archive', 'delete'], true) && !userHasPermission($currentUser, 'tasks.admin')) {
         denyTaskPermission();
     }
 

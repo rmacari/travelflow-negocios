@@ -10,7 +10,7 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-$currentUser = requireUser('admin');
+$currentUser = requirePermission('admin.backup.edit');
 
 function fetchAllIfTableExists($tableName, $sql)
 {

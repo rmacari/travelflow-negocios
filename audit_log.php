@@ -10,7 +10,7 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-requireUser('admin');
+requirePermission('admin.audit.view');
 
 if (!tableExists('zap_audit_log')) {
     http_response_code(503);

@@ -16,7 +16,7 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-$currentUser = requireUser('admin');
+$currentUser = requirePermission('admin.fields.edit');
 
 $raw  = file_get_contents('php://input');
 $data = json_decode($raw, true);

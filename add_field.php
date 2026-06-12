@@ -29,7 +29,7 @@ require __DIR__ . '/db.php';
 sendCors();
 
 // Gerenciar campos exige usuário admin ou owner.
-$currentUser = requireUser('admin');
+$currentUser = requirePermission('admin.fields.edit');
 
 // ---------------------------------------------------------------------------
 // LEITURA E DECODIFICAÇÃO DO BODY

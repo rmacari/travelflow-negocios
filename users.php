@@ -10,7 +10,7 @@
 require __DIR__ . '/db.php';
 
 sendCors();
-$currentUser = requireUser('admin');
+$currentUser = requirePermission('admin.users.view');
 
 function readUserPayload()
 {
@@ -68,23 +68,188 @@ function fetchUserForManagement($id)
     return $user;
 }
 
+function canManageRolePermissions($actor, $role)
+{
+    $role = normalizeUserRole($role);
+    if (in_array($role, ['admin', 'owner'], true)) {
+        return false;
+    }
+
+    if (normalizeUserRole($actor['role'] ?? '') === 'owner') {
+        return in_array($role, ['viewer', 'editor'], true);
+    }
+
+    return userHasPermission($actor, 'admin.users.edit') && in_array($role, ['viewer', 'editor'], true);
+}
+
+function saveRolePermissions($role, $permissions, $currentUser)
+{
+    if (!userHasPermission($currentUser, 'admin.users.edit')) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Você não pode editar permissões de grupos.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    $role = normalizeUserRole($role);
+    if (!canManageRolePermissions($currentUser, $role)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Você não pode alterar permissões deste grupo.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $permissions = normalizePermissionList($permissions);
+    if ($role === 'viewer' && !in_array('negocio.view', $permissions, true)) {
+        $permissions[] = 'negocio.view';
+    }
+
+    $json = json_encode(array_values(array_unique($permissions)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = getDb()->prepare("\n        INSERT INTO zap_role_permissions (role, permissions_json, updated_by_user_id)\n        VALUES (:role, :permissions_json, :updated_by_user_id)\n        ON DUPLICATE KEY UPDATE\n            permissions_json = VALUES(permissions_json),\n            updated_by_user_id = VALUES(updated_by_user_id)\n    ");
+    $stmt->execute([
+        'role' => $role,
+        'permissions_json' => $json,
+        'updated_by_user_id' => (int) $currentUser['id'],
+    ]);
+
+    logAudit($currentUser, 'role_permissions.update', 'zap_role_permissions', $role, null, [
+        'role' => $role,
+        'permissions' => $permissions,
+    ]);
+
+    return $permissions;
+}
+
+
+function saveUserPermissions($userId, $permissions, $currentUser)
+{
+    $target = fetchUserForManagement((int) $userId);
+    if (!canManageTargetUser($currentUser, $target['role'], (int) $target['id'])) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Você não pode alterar permissões deste usuário.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $permissions = normalizePermissionList($permissions);
+    $json = json_encode(array_values(array_unique($permissions)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = getDb()->prepare("\n        INSERT INTO zap_user_permissions (user_id, permissions_json, updated_by_user_id)\n        VALUES (:user_id, :permissions_json, :updated_by_user_id)\n        ON DUPLICATE KEY UPDATE\n            permissions_json = VALUES(permissions_json),\n            updated_by_user_id = VALUES(updated_by_user_id)\n    ");
+    $stmt->execute([
+        'user_id' => (int) $target['id'],
+        'permissions_json' => $json,
+        'updated_by_user_id' => (int) $currentUser['id'],
+    ]);
+
+    logAudit($currentUser, 'user_permissions.update', 'zap_user_permissions', (int) $target['id'], null, [
+        'user_id' => (int) $target['id'],
+        'permissions' => $permissions,
+    ]);
+
+    return $permissions;
+}
+
+function clearUserPermissions($userId, $currentUser)
+{
+    $target = fetchUserForManagement((int) $userId);
+    if (!canManageTargetUser($currentUser, $target['role'], (int) $target['id'])) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Você não pode alterar permissões deste usuário.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $stmt = getDb()->prepare('DELETE FROM zap_user_permissions WHERE user_id = :user_id');
+    $stmt->execute(['user_id' => (int) $target['id']]);
+    logAudit($currentUser, 'user_permissions.reset', 'zap_user_permissions', (int) $target['id'], null, ['reset_to_group' => true]);
+}
+
+function canViewUserInManagement($actor, $target)
+{
+    $targetRole = normalizeUserRole($target['role'] ?? 'viewer');
+    if (in_array($targetRole, ['admin', 'owner'], true)) {
+        return (int) ($actor['id'] ?? 0) === (int) ($target['id'] ?? 0);
+    }
+
+    return true;
+}
+
+function filterManageableRolePermissions($rolePermissions)
+{
+    return array_intersect_key($rolePermissions, array_flip(['viewer', 'editor']));
+}
+
+function filterVisibleUserPermissions($userPermissions, $visibleUsers)
+{
+    $visibleIds = [];
+    foreach ($visibleUsers as $user) {
+        $visibleIds[(int) $user['id']] = true;
+    }
+
+    return array_filter($userPermissions, function ($permissions, $userId) use ($visibleIds) {
+        return isset($visibleIds[(int) $userId]);
+    }, ARRAY_FILTER_USE_BOTH);
+}
+
+function fetchVisibleUsersForManagement($currentUser)
+{
+    $stmt = getDb()->query("
+        SELECT id, username, full_name, role, is_active, created_at, updated_at, last_login_at
+        FROM zap_users
+        ORDER BY FIELD(role, 'owner', 'admin', 'editor', 'viewer'), username ASC
+    ");
+
+    return array_values(array_filter($stmt->fetchAll(), function ($user) use ($currentUser) {
+        return canViewUserInManagement($currentUser, $user);
+    }));
+}
+
 try {
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-        $stmt = getDb()->query("
-            SELECT id, username, full_name, role, is_active, created_at, updated_at, last_login_at
-            FROM zap_users
-            ORDER BY FIELD(role, 'owner', 'admin', 'editor', 'viewer'), username ASC
-        ");
+        $users = fetchVisibleUsersForManagement($currentUser);
 
         echo json_encode([
             'success' => true,
-            'users'   => $stmt->fetchAll(),
+            'users'   => $users,
+            'role_permissions' => filterManageableRolePermissions(fetchRolePermissionMap()),
+            'user_permissions' => filterVisibleUserPermissions(fetchUserPermissionMap(), $users),
+            'permission_catalog' => getPermissionCatalog(),
         ], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
     $data = readUserPayload();
     $action = $data['action'] ?? 'create';
+
+    if ($action === 'update_role_permissions') {
+        $role = normalizeUserRole($data['role'] ?? '');
+        $permissions = saveRolePermissions($role, $data['permissions'] ?? [], $currentUser);
+        echo json_encode([
+            'success' => true,
+            'message' => 'Permissões do grupo atualizadas.',
+            'role' => $role,
+            'permissions' => $permissions,
+            'role_permissions' => filterManageableRolePermissions(fetchRolePermissionMap()),
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($action === 'update_user_permissions') {
+        $permissions = saveUserPermissions((int) ($data['id'] ?? 0), $data['permissions'] ?? [], $currentUser);
+        $users = fetchVisibleUsersForManagement($currentUser);
+        echo json_encode([
+            'success' => true,
+            'message' => 'Permissões do usuário atualizadas.',
+            'permissions' => $permissions,
+            'user_permissions' => filterVisibleUserPermissions(fetchUserPermissionMap(), $users),
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($action === 'reset_user_permissions') {
+        clearUserPermissions((int) ($data['id'] ?? 0), $currentUser);
+        $users = fetchVisibleUsersForManagement($currentUser);
+        echo json_encode([
+            'success' => true,
+            'message' => 'Usuário voltou a usar permissões do grupo.',
+            'user_permissions' => filterVisibleUserPermissions(fetchUserPermissionMap(), $users),
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 
     if ($action === 'create') {
         $username = validateUsername($data['username'] ?? '');
