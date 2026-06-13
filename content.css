@@ -215,6 +215,19 @@
   padding: 14px;
 }
 
+.tfq-task-section:not([open]) {
+  min-height: 0;
+}
+
+.tfq-admin-section:not([open]) {
+  min-height: 0;
+}
+
+.tfq-admin-section:not([open]) .tfq-admin-section-body {
+  display: none;
+  padding: 0;
+}
+
 .tfq-admin-block + .tfq-admin-block {
   border-top: 1px solid var(--tf-addon-border);
   padding-top: 14px;
@@ -729,7 +742,14 @@
    --------------------------------------------------------------------------- */
 .tfq-tab-pane {
   display: grid;
+  align-items: start;
+  align-content: start;
   gap: 12px;
+}
+
+.tfq-admin-section,
+.tfq-task-section {
+  align-self: start;
 }
 
 .tfq-tab-pane-hidden {
@@ -947,6 +967,15 @@
   margin-top: 8px;
 }
 
+.tfq-create-task-from-business {
+  width: auto;
+  justify-self: start;
+  margin-top: 10px;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
 .tfq-business-task-link {
   display: grid;
   gap: 2px;
@@ -1007,18 +1036,18 @@
 .tfq-task-overview-filter {
   display: grid;
   gap: 2px;
-  min-height: 56px;
+  min-height: 44px;
   border: 1px solid var(--tf-addon-border);
   border-radius: 8px;
   background: #fff;
-  padding: 8px;
+  padding: 6px 8px;
   color: var(--tf-addon-text);
   text-align: left;
   cursor: pointer;
 }
 
 .tfq-task-overview-filter strong {
-  font: 800 19px/1 Arial, sans-serif;
+  font: 800 17px/1 Arial, sans-serif;
 }
 
 .tfq-task-overview-filter span {
@@ -1159,14 +1188,23 @@
 }
 
 .tfq-audit-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   border: 1px solid var(--tf-addon-border);
   border-radius: 10px;
   background: #fff;
   padding: 10px;
 }
 
+.tfq-audit-main {
+  min-width: 0;
+}
+
 .tfq-audit-item strong,
-.tfq-audit-item span {
+.tfq-audit-item span,
+.tfq-audit-item em {
   display: block;
 }
 
@@ -1180,6 +1218,32 @@
   font: 500 11px/1.4 Arial, sans-serif;
   color: var(--tf-addon-muted);
   overflow-wrap: anywhere;
+}
+
+.tfq-audit-item em {
+  margin-top: 6px;
+  color: var(--tf-addon-text);
+  font: 600 12px/1.35 Arial, sans-serif;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.tfq-audit-delete {
+  flex: 0 0 auto;
+}
+
+.tfq-audit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 2px 0;
+}
+
+.tfq-audit-pagination span {
+  color: var(--tf-addon-muted);
+  font: 700 11px/1.3 Arial, sans-serif;
+  text-align: center;
 }
 
 /* ---------------------------------------------------------------------------

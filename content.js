@@ -790,13 +790,16 @@
   let negociosCache             = [];
   let tasksCache                = [];
   let taskOverviewCache         = [];
-  let taskOverviewFilter        = 'all';
+  let taskOverviewFilter        = 'overdue';
   let taskAssigneesCache        = [];
+  let auditPage                 = 1;
+  let auditPagination           = { page: 1, pages: 1, total: 0, limit: 7 };
   let editingId                 = 0;
   let negocioViewMode           = 'create';
   let businessEditUnlocked      = false;
   let negocioLoadingLocked      = false;
   let editingTaskId             = 0;
+  let editingTaskSource         = null;
   let focusedTaskId             = 0;
   let focusTaskNavigationPending = false;
   let lastFormSignature         = '';
@@ -2722,20 +2725,80 @@
     }
   }
 
-  async function loadAuditLog() {
+  async function downloadAuditLog() {
+    if (!hasPermission('admin.audit.view', 'admin')) {
+      setAuditStatus('Seu usuário não tem permissão para baixar auditoria.', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('tfq-download-audit');
+    if (btn) btn.disabled = true;
+    setAuditStatus('Gerando log de auditoria...', '');
+
+    try {
+      const result = await fetchJson(`${API_BASE}/audit_log.php?download=1&_t=${Date.now()}`, {
+        headers: adminHeaders()
+      }, 30000);
+
+      const json = JSON.stringify(result, null, 2);
+      const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      a.href = url;
+      a.download = `zap-negocios-auditoria-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      setAuditStatus('Log de auditoria gerado.', 'success');
+      await loadAuditLog(auditPage);
+    } catch (error) {
+      setAuditStatus(`Erro: ${error.message}`, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function loadAuditLog(page = auditPage) {
     const listEl = document.getElementById('tfq-audit-list');
     if (!listEl || !hasPermission('admin.audit.view', 'admin')) return;
 
     listEl.innerHTML = '<div class="tfq-empty">Carregando auditoria...</div>';
 
     try {
-      const result = await fetchJson(`${API_BASE}/audit_log.php?limit=30&_t=${Date.now()}`, {
+      auditPage = Math.max(1, Number(page) || 1);
+      const result = await fetchJson(`${API_BASE}/audit_log.php?limit=7&page=${auditPage}&_t=${Date.now()}`, {
         headers: adminHeaders()
       });
 
+      auditPagination = result.pagination || { page: auditPage, pages: 1, total: 0, limit: 7 };
+      auditPage = Number(auditPagination.page || auditPage);
       renderAuditLog(Array.isArray(result.logs) ? result.logs : []);
     } catch (error) {
       listEl.innerHTML = `<div class="tfq-empty">Erro: ${escapeHtml(error.message)}</div>`;
+    }
+  }
+
+  async function deleteAuditItem(id) {
+    if (!hasPermission('admin.backup.edit', 'admin')) {
+      setAuditStatus('Seu usuário não tem permissão para apagar auditoria.', 'error');
+      return;
+    }
+    if (!window.confirm('Apagar este evento de auditoria?')) return;
+
+    try {
+      setAuditStatus('Apagando evento de auditoria...', '');
+      const result = await fetchJson(`${API_BASE}/audit_log.php`, {
+        method: 'POST',
+        headers: adminHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ action: 'delete', id })
+      });
+      setAuditStatus(result.message || 'Evento apagado.', 'success');
+      await loadAuditLog(auditPage);
+    } catch (error) {
+      setAuditStatus(`Erro: ${error.message}`, 'error');
     }
   }
 
@@ -2771,8 +2834,22 @@
       'user.set_status': 'Status de usuário alterado',
       'user.reset_password': 'Senha redefinida',
       'user.update_role': 'Permissão alterada',
-      'backup.export': 'Backup exportado'
+      'role_permissions.update': 'Permissões do grupo alteradas',
+      'user_permissions.update': 'Permissões do usuário alteradas',
+      'user_permissions.reset': 'Permissões do usuário restauradas',
+      'backup.export': 'Backup exportado',
+      'audit.export': 'Auditoria exportada'
     }[action] || action || '-';
+  }
+
+  function auditDetailText(log) {
+    if (log.details) return log.details;
+    const data = log.after_data && typeof log.after_data === 'object' ? log.after_data : log.before_data;
+    if (!data || typeof data !== 'object') return '';
+    return Object.entries(data)
+      .filter(([key, value]) => ['title', 'nome_lead', 'lead_name', 'destino', 'status', 'due_at', 'priority', 'username', 'role'].includes(key) && value)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join(' · ');
   }
 
   function renderAuditLog(logs) {
@@ -2780,16 +2857,53 @@
     if (!listEl) return;
 
     if (logs.length === 0) {
-      listEl.innerHTML = '<div class="tfq-empty">Nenhum evento de auditoria encontrado.</div>';
+      listEl.innerHTML = `${renderAuditPagination()}<div class="tfq-empty">Nenhum evento de auditoria encontrado.</div>`;
+      bindAuditPagination();
       return;
     }
 
-    listEl.innerHTML = logs.map(log => `
-      <div class="tfq-audit-item">
-        <strong>${escapeHtml(actionLabel(log.action))}</strong>
-        <span>${escapeHtml(formatAuditDate(log.created_at))} • ${escapeHtml(log.actor_username || 'sistema')} • ${escapeHtml(log.entity_type || '-')}${log.entity_id ? ` #${escapeHtml(log.entity_id)}` : ''}</span>
+    const canDelete = hasPermission('admin.backup.edit', 'admin');
+    listEl.innerHTML = `
+      ${renderAuditPagination()}
+      ${logs.map(log => `
+        <div class="tfq-audit-item" data-audit-id="${Number(log.id)}">
+          <div class="tfq-audit-main">
+            <strong>${escapeHtml(actionLabel(log.action))}</strong>
+            <span>${escapeHtml(formatAuditDate(log.created_at))} • ${escapeHtml(log.actor_full_name || log.actor_username || 'sistema')} • ${escapeHtml(log.entity_type || '-')}${log.entity_id ? ` #${escapeHtml(log.entity_id)}` : ''}</span>
+            ${auditDetailText(log) ? `<em>${escapeHtml(auditDetailText(log))}</em>` : ''}
+          </div>
+          <button class="tfq-mini-btn tfq-mini-btn-danger tfq-audit-delete" data-id="${Number(log.id)}" type="button" ${canDelete ? '' : 'disabled'}>Apagar</button>
+        </div>
+      `).join('')}
+      ${renderAuditPagination()}
+    `;
+
+    bindAuditPagination();
+    listEl.querySelectorAll('.tfq-audit-delete').forEach(btn => {
+      btn.addEventListener('click', () => deleteAuditItem(Number(btn.dataset.id)));
+    });
+  }
+
+  function renderAuditPagination() {
+    const page = Number(auditPagination.page || 1);
+    const pages = Number(auditPagination.pages || 1);
+    const total = Number(auditPagination.total || 0);
+    return `
+      <div class="tfq-audit-pagination">
+        <button class="tfq-mini-btn tfq-audit-page-prev" type="button" ${page <= 1 ? 'disabled' : ''}>Anterior</button>
+        <span>Página ${page} de ${pages} • ${total} evento(s)</span>
+        <button class="tfq-mini-btn tfq-audit-page-next" type="button" ${page >= pages ? 'disabled' : ''}>Próxima</button>
       </div>
-    `).join('');
+    `;
+  }
+
+  function bindAuditPagination() {
+    document.querySelectorAll(`#${PANEL_ID} .tfq-audit-page-prev`).forEach(btn => {
+      btn.addEventListener('click', () => loadAuditLog(Math.max(1, auditPage - 1)));
+    });
+    document.querySelectorAll(`#${PANEL_ID} .tfq-audit-page-next`).forEach(btn => {
+      btn.addEventListener('click', () => loadAuditLog(auditPage + 1));
+    });
   }
 
   function priorityLabel(priority) {
@@ -3027,6 +3141,21 @@
     scrollFocusedTaskIntoView();
   }
 
+  function focusNewTaskForm() {
+    focusedTaskId = 0;
+    clearTaskForm();
+    openTasksTab();
+    setTaskSectionsState('form');
+
+    window.setTimeout(() => {
+      const title = document.getElementById('tfq-task-title');
+      if (title) {
+        title.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        title.focus();
+      }
+    }, 120);
+  }
+
   function getTaskIdentityPayload(task) {
     return {
       conversation_id: task.conversation_id || '',
@@ -3069,7 +3198,9 @@
   }
 
   function getTaskFormData() {
-    const data = getLeadContextPayload();
+    const data = editingTaskId > 0 && editingTaskSource
+      ? getTaskIdentityPayload(editingTaskSource)
+      : getLeadContextPayload();
     const negocioSelect = document.getElementById('tfq-task-negocio');
     const assignedUser = getSelectedTaskAssignee();
 
@@ -3089,6 +3220,7 @@
 
   function clearTaskForm() {
     editingTaskId = 0;
+    editingTaskSource = null;
 
     const title = document.getElementById('tfq-task-title');
     const negocio = document.getElementById('tfq-task-negocio');
@@ -3114,6 +3246,7 @@
   function fillTaskForm(task) {
     clearTaskForm();
     editingTaskId = Number(task.id || 0);
+    editingTaskSource = task;
 
     const title = document.getElementById('tfq-task-title');
     const negocio = document.getElementById('tfq-task-negocio');
@@ -3136,10 +3269,28 @@
     if (saveBtn) saveBtn.textContent = 'Atualizar tarefa';
   }
 
+  function editTaskInPanel(task) {
+    if (!task) return;
+
+    focusedTaskId = Number(task.id || 0);
+    fillTaskForm(task);
+    openTasksTab();
+    setTaskSectionsState('form');
+
+    window.setTimeout(() => {
+      const title = document.getElementById('tfq-task-title');
+      if (title) {
+        title.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        title.focus();
+        title.select();
+      }
+    }, 120);
+  }
+
   function updateTaskSummary() {
     const pending = tasksCache.filter(task => task.status === 'pendente');
     const overdue = pending.filter(isTaskOverdue);
-    const today = pending.filter(task => !isTaskOverdue(task) && isTaskToday(task));
+    const today = pending.filter(isTaskToday);
     const summaryEl = document.getElementById('tfq-task-summary');
     const countEl = document.getElementById('tfq-task-tab-count');
 
@@ -3178,8 +3329,15 @@
             </button>
           `).join('')}
         </div>
-      ` : ''}
+      ` : `
+        <button class="tfq-btn tfq-btn-primary tfq-create-task-from-business" type="button" ${canEditTasks() ? '' : 'disabled'}>
+          Criar nova tarefa
+        </button>
+      `}
     `;
+
+    const createTaskBtn = summaryEl.querySelector('.tfq-create-task-from-business');
+    if (createTaskBtn) createTaskBtn.addEventListener('click', focusNewTaskForm);
 
     summaryEl.querySelectorAll('.tfq-business-task-link').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -3203,7 +3361,7 @@
   function getTaskOverviewStats() {
     const pending = taskOverviewCache.filter(task => task.status === 'pendente');
     const overdue = pending.filter(isTaskOverdue);
-    const today = pending.filter(task => !isTaskOverdue(task) && isTaskToday(task));
+    const today = pending.filter(isTaskToday);
     const upcoming = pending.filter(task => {
       const due = parseTaskDate(task.due_at);
       return due && !isTaskOverdue(task) && !isTaskToday(task);
@@ -3216,6 +3374,9 @@
   function getTaskOverviewGroups() {
     const stats = getTaskOverviewStats();
 
+    if (taskOverviewFilter === 'pending') {
+      return [{ title: 'Pendentes', tasks: stats.pending }];
+    }
     if (taskOverviewFilter === 'overdue') {
       return [{ title: 'Atrasadas', tasks: stats.overdue }];
     }
@@ -3229,12 +3390,8 @@
       return [{ title: 'Sem prazo', tasks: stats.noDue }];
     }
 
-    return [
-      { title: 'Atrasadas', tasks: stats.overdue },
-      { title: 'Hoje', tasks: stats.today },
-      { title: 'Próximas', tasks: stats.upcoming },
-      { title: 'Sem prazo', tasks: stats.noDue }
-    ];
+    taskOverviewFilter = 'overdue';
+    return [{ title: 'Atrasadas', tasks: stats.overdue }];
   }
 
   function renderTaskOverview() {
@@ -3247,10 +3404,10 @@
 
     const stats = getTaskOverviewStats();
     const filters = [
-      { key: 'all', label: 'Pendentes', count: stats.pending.length, tone: 'info' },
       { key: 'overdue', label: 'Atrasadas', count: stats.overdue.length, tone: 'danger' },
-      { key: 'today', label: 'Hoje', count: stats.today.length, tone: 'warning' },
       { key: 'upcoming', label: 'Próximas', count: stats.upcoming.length, tone: 'info' },
+      { key: 'pending', label: 'Pendentes', count: stats.pending.length, tone: 'info' },
+      { key: 'today', label: 'Hoje', count: stats.today.length, tone: 'warning' },
       { key: 'no_due', label: 'Sem prazo', count: stats.noDue.length, tone: 'ok' }
     ];
 
@@ -3267,7 +3424,7 @@
 
     statsEl.querySelectorAll('.tfq-task-overview-filter').forEach(btn => {
       btn.addEventListener('click', () => {
-        taskOverviewFilter = btn.dataset.filter || 'all';
+        taskOverviewFilter = btn.dataset.filter || 'overdue';
         renderTaskOverview();
       });
     });
@@ -3293,7 +3450,7 @@
     listEl.querySelectorAll('.tfq-task-overview-edit').forEach(btn => {
       btn.addEventListener('click', () => {
         const task = taskOverviewCache.find(item => Number(item.id) === Number(btn.dataset.id));
-        if (task && taskMatchesCurrentContext(task)) fillTaskForm(task);
+        if (task) editTaskInPanel(task);
       });
     });
 
@@ -3479,7 +3636,7 @@
     listEl.querySelectorAll('.tfq-task-edit').forEach(btn => {
       btn.addEventListener('click', () => {
         const task = tasksCache.find(item => Number(item.id) === Number(btn.dataset.id));
-        if (task) fillTaskForm(task);
+        if (task) editTaskInPanel(task);
       });
     });
 
@@ -3513,10 +3670,8 @@
     const canWrite = canEditTasks();
     const canAdminTask = canAdminTasks();
     const status = task.status || 'pendente';
-    const canEditTask = canWrite && (!showLead || taskMatchesCurrentContext(task));
-    const editTitle = canEditTask
-      ? 'Editar tarefa'
-      : 'Abra o lead desta tarefa para editar os detalhes';
+    const canEditTask = canWrite;
+    const editTitle = canEditTask ? 'Editar tarefa' : 'Seu usuário não tem permissão para editar tarefas';
     const metaItems = [
       statusLabel(status),
       formatTaskDue(task.due_at),
@@ -3570,7 +3725,7 @@
     }
 
     const context = getCurrentContext();
-    if (!context.isValid) {
+    if (editingTaskId === 0 && !context.isValid) {
       setTaskStatus('Selecione uma conversa primeiro.', 'error');
       return;
     }
@@ -4061,6 +4216,7 @@
             <div class="tfq-admin-section-body">
               <div class="tfq-actions">
                 <button class="tfq-btn tfq-btn-primary" id="tfq-download-backup" type="button">Baixar backup JSON</button>
+                <button class="tfq-btn tfq-btn-secondary" id="tfq-download-audit" type="button">Baixar log</button>
                 <button class="tfq-btn tfq-btn-secondary" id="tfq-reload-audit" type="button">Recarregar auditoria</button>
               </div>
               <div id="tfq-audit-status" style="margin-top:10px; font: 600 13px/1.4 Arial, sans-serif;"></div>
@@ -4267,6 +4423,7 @@
     panel.querySelector('#tfq-add-field-btn').addEventListener('click', addField);
     panel.querySelector('#tfq-add-user-btn').addEventListener('click', addUser);
     panel.querySelector('#tfq-download-backup').addEventListener('click', downloadBackup);
+    panel.querySelector('#tfq-download-audit').addEventListener('click', downloadAuditLog);
     panel.querySelector('#tfq-reload-audit').addEventListener('click', loadAuditLog);
     panel.querySelector('#tfq-save-toggle-appearance').addEventListener('click', saveToggleAppearance);
     panel.querySelector('#tfq-reset-toggle-appearance').addEventListener('click', resetToggleAppearance);
