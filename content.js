@@ -4226,7 +4226,7 @@
         </div>
 
       </div>
-      <footer id="tfq-footer">Zap Negócios - Por Ricardo Macari.</footer>
+      <footer id="tfq-footer">Zap Negócios - Por <a href="https://macari.com.br" target="_blank" rel="noopener noreferrer">Ricardo Macari</a>.</footer>
     `;
 
     document.body.appendChild(toggle);

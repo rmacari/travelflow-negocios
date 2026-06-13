@@ -148,6 +148,16 @@
   text-align: center;
 }
 
+#tfq-footer a {
+  color: var(--tf-addon-primary);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+#tfq-footer a:hover {
+  text-decoration: underline;
+}
+
 /* ---------------------------------------------------------------------------
    CARDS
    Contêineres visuais para agrupar o dropdown de seleção e o formulário.
