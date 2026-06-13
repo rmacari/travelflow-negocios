@@ -22,6 +22,6 @@ INSERT INTO zap_role_permissions (role, permissions_json)
 VALUES
   ('viewer', '["negocio.view","tasks.view"]'),
   ('editor', '["negocio.view","negocio.edit","tasks.view","tasks.edit"]'),
-  ('admin', '["negocio.view","negocio.edit","negocio.delete","negocio.restore","tasks.view","tasks.edit","tasks.admin","admin.access","admin.appearance.view","admin.appearance.edit","admin.window.view","admin.window.edit","admin.notifications.view","admin.notifications.edit","admin.fields.view","admin.fields.edit","admin.users.view","admin.users.edit","admin.audit.view","admin.backup.edit"]'),
+  ('admin', '["negocio.view","negocio.edit","negocio.delete","negocio.restore","tasks.view","tasks.edit","tasks.admin","admin.access","admin.fields.view","admin.fields.edit","admin.users.view","admin.users.edit","admin.audit.view","admin.backup.edit"]'),
   ('owner', '["*"]')
 ON DUPLICATE KEY UPDATE permissions_json = permissions_json;

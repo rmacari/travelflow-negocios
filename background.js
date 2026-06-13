@@ -13,7 +13,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   enabled: true,
   intervalMinutes: 5,
   lookaheadMinutes: 15,
-  historyDays: 14,
+  historyDays: 1,
   normalPriority: 1,
   highPriority: 2
 };

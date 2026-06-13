@@ -46,21 +46,29 @@
   const INTERNAL_FIELD_KEYS = new Set(['deleted_at', 'deleted_by_user_id']);
   const DEFAULT_TOGGLE_SETTINGS = {
     label: 'Negócios',
-    x: null,
-    y: 120,
+    x: 960,
+    y: 10,
     color: '#ce1212'
   };
   const DEFAULT_PANEL_SETTINGS = {
-    slideMs: 180,
+    slideMs: 300,
     rebuildDelayMs: 90
   };
   const DEFAULT_NOTIFICATION_SETTINGS = {
     enabled: true,
     intervalMinutes: 5,
     lookaheadMinutes: 15,
-    historyDays: 14,
+    historyDays: 1,
     normalPriority: 1,
     highPriority: 2
+  };
+  const DEFAULT_THEME_SETTINGS = {
+    mode: 'auto',
+    nightStart: '18:00',
+    nightEnd: '07:00',
+    dayPrimary: '#0a6c74',
+    nightPrimary: '#4fb3bf',
+    applyToCrm: true
   };
 
   let API_BASE  = '';
@@ -71,9 +79,11 @@
   let toggleSettingsLoaded = false;
   let panelSettingsLoaded = false;
   let notificationSettingsLoaded = false;
+  let themeSettingsLoaded = false;
   let toggleSettings = { ...DEFAULT_TOGGLE_SETTINGS };
   let panelSettings = { ...DEFAULT_PANEL_SETTINGS };
   let notificationSettings = { ...DEFAULT_NOTIFICATION_SETTINGS };
+  let themeSettings = { ...DEFAULT_THEME_SETTINGS };
   let rolePermissionMap = {};
   let userPermissionMap = {};
   let permissionCatalog = [];
@@ -197,6 +207,287 @@
     const number = Number(value);
     if (!Number.isFinite(number)) return min;
     return Math.max(min, Math.min(max, number));
+  }
+
+  function normalizeTimeValue(value, fallback) {
+    const text = String(value || '').trim();
+    return /^\d{2}:\d{2}$/.test(text) ? text : fallback;
+  }
+
+  function normalizeThemeSettings(value = {}) {
+    const mode = ['auto', 'light', 'dark'].includes(value.mode) ? value.mode : DEFAULT_THEME_SETTINGS.mode;
+    const colorPattern = /^#[0-9a-f]{6}$/i;
+    return {
+      mode,
+      nightStart: normalizeTimeValue(value.nightStart, DEFAULT_THEME_SETTINGS.nightStart),
+      nightEnd: normalizeTimeValue(value.nightEnd, DEFAULT_THEME_SETTINGS.nightEnd),
+      dayPrimary: colorPattern.test(String(value.dayPrimary || '')) ? String(value.dayPrimary) : DEFAULT_THEME_SETTINGS.dayPrimary,
+      nightPrimary: colorPattern.test(String(value.nightPrimary || '')) ? String(value.nightPrimary) : DEFAULT_THEME_SETTINGS.nightPrimary,
+      applyToCrm: value.applyToCrm === true
+    };
+  }
+
+  function minutesFromTime(value) {
+    const [hours, minutes] = normalizeTimeValue(value, '00:00').split(':').map(Number);
+    return hours * 60 + minutes;
+  }
+
+  function isNightThemeTime(settings) {
+    const start = minutesFromTime(settings.nightStart);
+    const end = minutesFromTime(settings.nightEnd);
+    const now = new Date();
+    const current = now.getHours() * 60 + now.getMinutes();
+    if (start === end) return false;
+    return start < end ? current >= start && current < end : current >= start || current < end;
+  }
+
+  function getEffectiveTheme(settings = themeSettings) {
+    const normalized = normalizeThemeSettings(settings);
+    if (normalized.mode === 'dark') return 'dark';
+    if (normalized.mode === 'light') return 'light';
+    return isNightThemeTime(normalized) ? 'dark' : 'light';
+  }
+
+  function applyThemeSettings() {
+    themeSettings = normalizeThemeSettings(themeSettings);
+    const theme = getEffectiveTheme(themeSettings);
+    const panel = getPanel();
+    const toggle = getToggle();
+    const primary = theme === 'dark' ? themeSettings.nightPrimary : themeSettings.dayPrimary;
+    document.documentElement.style.setProperty('--tf-addon-primary', primary);
+    document.documentElement.style.setProperty('--tf-addon-primary-strong', theme === 'dark' ? '#7fd6df' : '#08545a');
+    document.body.classList.toggle('tfq-crm-theme-dark', themeSettings.applyToCrm && theme === 'dark');
+    document.body.classList.toggle('tfq-crm-theme-light', themeSettings.applyToCrm && theme === 'light');
+    [panel, toggle].forEach(el => {
+      if (!el) return;
+      el.classList.toggle('tfq-theme-dark', theme === 'dark');
+      el.classList.toggle('tfq-theme-light', theme === 'light');
+    });
+    window.setTimeout(() => {
+      markActiveCrmConversation();
+      markReadableCrmBubbles();
+      markCrmThemeSurfaces();
+    }, 50);
+  }
+
+  function markActiveCrmConversation() {
+    document.querySelectorAll('.tfq-crm-active-conversation').forEach(el => {
+      el.classList.remove('tfq-crm-active-conversation');
+    });
+
+    if (!document.body.classList.contains('tfq-crm-theme-dark') || getPlatform() !== 'travel_flow') return;
+
+    const context = getCurrentContext();
+    const leadName = cleanDomText(context.leadName);
+    const leadPhone = normalizePhone(context.leadPhone);
+    if (!leadName && !leadPhone) return;
+
+    const maxRight = window.innerWidth * 0.45;
+    let best = null;
+    let bestScore = 0;
+    document.querySelectorAll('div, li, button, a').forEach(el => {
+      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.right > maxRight || rect.width < 160 || rect.height < 42 || rect.height > 130) return;
+
+      const text = cleanDomText(el.textContent);
+      if (!text || text.length > 500) return;
+
+      let score = 0;
+      if (leadPhone && normalizePhone(text).includes(leadPhone)) score += 100;
+      if (leadName && text.toLowerCase().includes(leadName.toLowerCase())) score += 80;
+      if (!score) return;
+      score += Math.max(0, 40 - Math.abs(rect.height - 72));
+
+      if (score > bestScore) {
+        best = el;
+        bestScore = score;
+      }
+    });
+
+    if (best) best.classList.add('tfq-crm-active-conversation');
+  }
+
+  function getRgbParts(value) {
+    const match = String(value || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/i);
+    if (!match) return null;
+    const alpha = match[4] === undefined ? 1 : Number(match[4]);
+    if (alpha <= 0) return null;
+    return {
+      r: Number(match[1]),
+      g: Number(match[2]),
+      b: Number(match[3]),
+      alpha
+    };
+  }
+
+  function isLightBubbleColor(color) {
+    if (!color) return false;
+    const brightness = (color.r * 299 + color.g * 587 + color.b * 114) / 1000;
+    const isLightGreen = color.g >= 210 && color.r >= 170 && color.b >= 150;
+    return brightness >= 188 || isLightGreen;
+  }
+
+  function markReadableCrmBubbles() {
+    document.querySelectorAll('.tfq-crm-readable-bubble').forEach(el => {
+      el.classList.remove('tfq-crm-readable-bubble');
+    });
+
+    if (!document.body.classList.contains('tfq-crm-theme-dark') || getPlatform() !== 'travel_flow') return;
+
+    document.querySelectorAll('div, article, section').forEach(el => {
+      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 70 || rect.height < 24 || rect.width > window.innerWidth * 0.72 || rect.height > 360) return;
+      const text = cleanDomText(el.textContent);
+      if (!text || text.length > 1200) return;
+
+      const color = getRgbParts(window.getComputedStyle(el).backgroundColor);
+      if (!isLightBubbleColor(color)) return;
+
+      el.classList.add('tfq-crm-readable-bubble');
+    });
+  }
+
+  function markCrmThemeSurfaces() {
+    document.querySelectorAll('[data-tfq-crm-sidebar-contrast="1"], [data-tfq-crm-header-contrast="1"]').forEach(el => {
+      el.removeAttribute('data-tfq-crm-sidebar-contrast');
+      el.removeAttribute('data-tfq-crm-header-contrast');
+      el.style.removeProperty('color');
+      el.style.removeProperty('opacity');
+      el.style.removeProperty('filter');
+      el.style.removeProperty('stroke');
+    });
+    document.querySelectorAll('.tfq-crm-main-sidebar, .tfq-crm-sidebar-readable, .tfq-crm-header-surface, .tfq-crm-wallpaper-surface, .tfq-crm-composer-surface').forEach(el => {
+      el.classList.remove('tfq-crm-main-sidebar', 'tfq-crm-sidebar-readable', 'tfq-crm-header-surface', 'tfq-crm-wallpaper-surface', 'tfq-crm-composer-surface');
+    });
+
+    if (!document.body.classList.contains('tfq-crm-theme-dark') || getPlatform() !== 'travel_flow') return;
+
+    document.querySelectorAll('aside, nav, div').forEach(el => {
+      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.left > 20 || rect.top > 20 || rect.width < 170 || rect.width > 290 || rect.height < window.innerHeight * 0.65) return;
+      el.classList.add('tfq-crm-main-sidebar');
+    });
+
+    document.querySelectorAll('div, nav, aside, a, button, span, p, small, strong, b, svg').forEach(el => {
+      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) return;
+      const rect = el.getBoundingClientRect();
+      const isSidebarRegion = rect.left < 260 && rect.top > 105 && rect.width <= 250 && rect.height >= 10 && rect.height <= 110;
+      if (isSidebarRegion) {
+        el.classList.add('tfq-crm-sidebar-readable');
+        el.setAttribute('data-tfq-crm-sidebar-contrast', '1');
+        el.style.setProperty('color', '#e5edf7', 'important');
+        el.style.setProperty('opacity', '1', 'important');
+        el.style.setProperty('filter', 'none', 'important');
+        if (el.tagName.toLowerCase() === 'svg') {
+          el.style.setProperty('stroke', 'currentColor', 'important');
+        }
+      }
+    });
+
+    document.querySelectorAll('h1, h2, h3, h4, span, p, small, strong, b, div').forEach(el => {
+      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) return;
+      const rect = el.getBoundingClientRect();
+      const isConversationHeader = rect.top >= 0
+        && rect.top <= 86
+        && rect.left >= 55
+        && rect.left <= window.innerWidth - 120
+        && rect.width <= 520
+        && rect.height >= 10
+        && rect.height <= 86;
+      if (!isConversationHeader) return;
+      const text = cleanDomText(el.textContent);
+      if (!text || text.length > 160) return;
+
+      el.setAttribute('data-tfq-crm-header-contrast', '1');
+      el.style.setProperty('color', '#f8fafc', 'important');
+      el.style.setProperty('opacity', '1', 'important');
+      el.style.setProperty('filter', 'none', 'important');
+    });
+
+    document.querySelectorAll('header, div, section').forEach(el => {
+      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) return;
+      const rect = el.getBoundingClientRect();
+      const isHeaderSurface = rect.top >= 0
+        && rect.top <= 12
+        && rect.left >= 55
+        && rect.width >= 360
+        && rect.height >= 44
+        && rect.height <= 92;
+      if (!isHeaderSurface) return;
+
+      el.classList.add('tfq-crm-header-surface');
+      el.querySelectorAll('h1, h2, h3, h4, span, p, small, strong, b, div').forEach(child => {
+        child.setAttribute('data-tfq-crm-header-contrast', '1');
+        child.style.setProperty('color', '#f8fafc', 'important');
+        child.style.setProperty('opacity', '1', 'important');
+        child.style.setProperty('filter', 'none', 'important');
+      });
+    });
+
+    document.querySelectorAll('main, section, article, div').forEach(el => {
+      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.left < window.innerWidth * 0.28 || rect.width < 420 || rect.height < 320) return;
+      const style = window.getComputedStyle(el);
+      const hasWallpaper = style.backgroundImage && style.backgroundImage !== 'none';
+      const bg = getRgbParts(style.backgroundColor);
+      const isLargeLightSurface = bg && isLightBubbleColor(bg);
+      if (hasWallpaper || isLargeLightSurface) {
+        el.classList.add('tfq-crm-wallpaper-surface');
+      }
+    });
+
+    document.querySelectorAll('div, footer, section').forEach(el => {
+      if (!isVisibleElement(el) || el.closest(`#${PANEL_ID}`)) return;
+      const rect = el.getBoundingClientRect();
+      const isComposerArea = rect.left > window.innerWidth * 0.28
+        && rect.bottom > window.innerHeight - 95
+        && rect.width > 420
+        && rect.height >= 46
+        && rect.height <= 130;
+      if (isComposerArea) el.classList.add('tfq-crm-composer-surface');
+    });
+  }
+
+  function loadThemeSettings() {
+    return new Promise(resolve => {
+      try {
+        chrome.storage.sync.get(['tfq_theme_settings'], result => {
+          themeSettings = normalizeThemeSettings(result.tfq_theme_settings || {});
+          themeSettingsLoaded = true;
+          applyThemeSettings();
+          resolve(themeSettings);
+        });
+      } catch {
+        themeSettings = { ...DEFAULT_THEME_SETTINGS };
+        themeSettingsLoaded = true;
+        applyThemeSettings();
+        resolve(themeSettings);
+      }
+    });
+  }
+
+  function saveThemeSettings(settings) {
+    themeSettings = normalizeThemeSettings(settings);
+    applyThemeSettings();
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.sync.set({ tfq_theme_settings: themeSettings }, () => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+          themeSettingsLoaded = true;
+          resolve(themeSettings);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   function normalizeToggleSettings(value = {}) {
@@ -377,6 +668,86 @@
     el.className = type ? type : '';
   }
 
+  function getThemeSettingsStatusEl() {
+    return document.getElementById('tfq-theme-settings-status');
+  }
+
+  function setThemeSettingsStatus(message, type = '') {
+    const el = getThemeSettingsStatusEl();
+    if (!el) return;
+    el.textContent = message || '';
+    el.className = type ? type : '';
+  }
+
+  function renderThemeSettingsForm() {
+    const modeInput = document.getElementById('tfq-theme-mode');
+    const nightStartInput = document.getElementById('tfq-theme-night-start');
+    const nightEndInput = document.getElementById('tfq-theme-night-end');
+    const dayPrimaryInput = document.getElementById('tfq-theme-day-primary');
+    const nightPrimaryInput = document.getElementById('tfq-theme-night-primary');
+    const applyToCrmInput = document.getElementById('tfq-theme-apply-crm');
+    if (!modeInput || !nightStartInput || !nightEndInput || !dayPrimaryInput || !nightPrimaryInput || !applyToCrmInput) return;
+
+    const settings = normalizeThemeSettings(themeSettings);
+    modeInput.value = settings.mode;
+    nightStartInput.value = settings.nightStart;
+    nightEndInput.value = settings.nightEnd;
+    dayPrimaryInput.value = settings.dayPrimary;
+    nightPrimaryInput.value = settings.nightPrimary;
+    applyToCrmInput.checked = settings.applyToCrm;
+    applyThemeSettings();
+  }
+
+  function collectThemeSettingsForm() {
+    return normalizeThemeSettings({
+      mode: document.getElementById('tfq-theme-mode')?.value,
+      nightStart: document.getElementById('tfq-theme-night-start')?.value,
+      nightEnd: document.getElementById('tfq-theme-night-end')?.value,
+      dayPrimary: document.getElementById('tfq-theme-day-primary')?.value,
+      nightPrimary: document.getElementById('tfq-theme-night-primary')?.value,
+      applyToCrm: document.getElementById('tfq-theme-apply-crm')?.checked === true
+    });
+  }
+
+  function previewThemeSettings() {
+    themeSettings = collectThemeSettingsForm();
+    applyThemeSettings();
+  }
+
+  async function saveThemeSettingsFromForm() {
+    try {
+      setThemeSettingsStatus('Salvando tema...', '');
+      await saveThemeSettings(collectThemeSettingsForm());
+      renderThemeSettingsForm();
+      setThemeSettingsStatus('Tema salvo neste navegador.', 'success');
+    } catch (error) {
+      setThemeSettingsStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
+  async function toggleCrmThemeFromForm() {
+    try {
+      themeSettings = collectThemeSettingsForm();
+      applyThemeSettings();
+      setThemeSettingsStatus('Atualizando tema...', '');
+      await saveThemeSettings(themeSettings);
+      setThemeSettingsStatus(themeSettings.applyToCrm ? 'Tema aplicado ao CRM.' : 'Tema removido do CRM.', 'success');
+    } catch (error) {
+      setThemeSettingsStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
+  async function resetThemeSettings() {
+    try {
+      setThemeSettingsStatus('Restaurando padrão...', '');
+      await saveThemeSettings(DEFAULT_THEME_SETTINGS);
+      renderThemeSettingsForm();
+      setThemeSettingsStatus('Tema restaurado para o padrão.', 'success');
+    } catch (error) {
+      setThemeSettingsStatus(`Erro: ${error.message}`, 'error');
+    }
+  }
+
   function renderToggleAppearanceForm() {
     const labelInput = document.getElementById('tfq-toggle-label');
     const xInput = document.getElementById('tfq-toggle-x');
@@ -418,11 +789,6 @@
   }
 
   async function saveToggleAppearance() {
-    if (!hasPermission('admin.appearance.edit', 'admin')) {
-      setToggleAppearanceStatus('Seu usuário não tem permissão para alterar o botão.', 'error');
-      return;
-    }
-
     try {
       setToggleAppearanceStatus('Salvando aparência do botão...', '');
       await saveToggleSettings(collectToggleAppearanceForm());
@@ -434,11 +800,6 @@
   }
 
   async function resetToggleAppearance() {
-    if (!hasPermission('admin.appearance.edit', 'admin')) {
-      setToggleAppearanceStatus('Seu usuário não tem permissão para alterar o botão.', 'error');
-      return;
-    }
-
     try {
       setToggleAppearanceStatus('Restaurando padrão...', '');
       await saveToggleSettings(DEFAULT_TOGGLE_SETTINGS);
@@ -501,11 +862,6 @@
   }
 
   async function savePanelSettingsFromForm() {
-    if (!hasPermission('admin.window.edit', 'admin')) {
-      setPanelSettingsStatus('Seu usuário não tem permissão para alterar a janela.', 'error');
-      return;
-    }
-
     try {
       setPanelSettingsStatus('Salvando ajustes da janela...', '');
       await savePanelSettings(collectPanelSettingsForm());
@@ -517,11 +873,6 @@
   }
 
   async function resetPanelSettings() {
-    if (!hasPermission('admin.window.edit', 'admin')) {
-      setPanelSettingsStatus('Seu usuário não tem permissão para alterar a janela.', 'error');
-      return;
-    }
-
     try {
       setPanelSettingsStatus('Restaurando padrão...', '');
       await savePanelSettings(DEFAULT_PANEL_SETTINGS);
@@ -573,11 +924,6 @@
   }
 
   async function saveNotificationSettingsFromForm() {
-    if (!hasPermission('admin.notifications.edit', 'admin')) {
-      setNotificationSettingsStatus('Seu usuário não tem permissão para alterar notificações.', 'error');
-      return;
-    }
-
     try {
       setNotificationSettingsStatus('Salvando notificações...', '');
       await saveNotificationSettings(collectNotificationSettingsForm());
@@ -589,11 +935,6 @@
   }
 
   async function resetNotificationSettings() {
-    if (!hasPermission('admin.notifications.edit', 'admin')) {
-      setNotificationSettingsStatus('Seu usuário não tem permissão para alterar notificações.', 'error');
-      return;
-    }
-
     try {
       setNotificationSettingsStatus('Restaurando padrão...', '');
       await saveNotificationSettings(DEFAULT_NOTIFICATION_SETTINGS);
@@ -606,7 +947,7 @@
 
   function setupToggleDragging(toggle) {
     toggle.addEventListener('pointerdown', event => {
-      if (event.button !== 0 || !hasPermission('admin.appearance.edit', 'admin')) return;
+      if (event.button !== 0) return;
 
       const rect = toggle.getBoundingClientRect();
       toggleDragState = {
@@ -3858,6 +4199,7 @@
       <div id="tfq-tabs">
         <button class="tfq-tab tfq-tab-active" data-tab="negocios" type="button">📋 Negócios</button>
         <button class="tfq-tab" data-tab="tarefas" type="button">✅ Tarefas <span id="tfq-task-tab-count" class="tfq-tab-count tfq-hidden"></span></button>
+        <button class="tfq-tab" data-tab="preferencias" type="button">⚙️ Preferências</button>
         <button class="tfq-tab" data-tab="usuarios" type="button">🛡️ Admin</button>
       </div>
 
@@ -3989,9 +4331,58 @@
           </details>
         </div>
 
-        <!-- ABA ADMIN -->
-        <div id="tfq-tab-usuarios" class="tfq-tab-pane tfq-tab-pane-hidden">
-          <details class="tfq-card tfq-admin-section" data-admin-permission="admin.appearance.view" open>
+        <!-- ABA PREFERÊNCIAS -->
+        <div id="tfq-tab-preferencias" class="tfq-tab-pane tfq-tab-pane-hidden">
+          <details class="tfq-card tfq-admin-section" open>
+            <summary class="tfq-admin-summary">
+              <span>Tema da janela</span>
+            </summary>
+            <div class="tfq-admin-section-body">
+              <div class="tfq-grid">
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-theme-mode">Tema</label>
+                  <select class="tfq-select" id="tfq-theme-mode">
+                    <option value="auto">Automático</option>
+                    <option value="light">Claro</option>
+                    <option value="dark">Escuro</option>
+                  </select>
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-theme-night-start">Início do modo noite</label>
+                  <input class="tfq-input" id="tfq-theme-night-start" type="time" />
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-theme-night-end">Fim do modo noite</label>
+                  <input class="tfq-input" id="tfq-theme-night-end" type="time" />
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-theme-day-primary">Cor principal do tema claro</label>
+                  <input class="tfq-color-input" id="tfq-theme-day-primary" type="color" />
+                </div>
+
+                <div class="tfq-row">
+                  <label class="tfq-label" for="tfq-theme-night-primary">Cor principal do tema escuro</label>
+                  <input class="tfq-color-input" id="tfq-theme-night-primary" type="color" />
+                </div>
+
+                <label class="tfq-check-row" for="tfq-theme-apply-crm">
+                  <input id="tfq-theme-apply-crm" type="checkbox" />
+                  Aplicar tema também no CRM
+                </label>
+              </div>
+
+              <div class="tfq-actions">
+                <button class="tfq-btn tfq-btn-primary" id="tfq-save-theme-settings" type="button">Salvar tema</button>
+                <button class="tfq-btn tfq-btn-secondary" id="tfq-reset-theme-settings" type="button">Restaurar padrão</button>
+              </div>
+              <div id="tfq-theme-settings-status"></div>
+            </div>
+          </details>
+
+          <details class="tfq-card tfq-admin-section">
             <summary class="tfq-admin-summary">
               <span>Botão flutuante</span>
             </summary>
@@ -4029,12 +4420,10 @@
                 <button class="tfq-btn tfq-btn-secondary" id="tfq-reset-toggle-appearance" type="button">Restaurar padrão</button>
               </div>
               <div id="tfq-toggle-appearance-status"></div>
-
             </div>
           </details>
 
-
-          <details class="tfq-card tfq-admin-section" data-admin-permission="admin.window.view">
+          <details class="tfq-card tfq-admin-section">
             <summary class="tfq-admin-summary">
               <span>Janela do Zap Negócios</span>
             </summary>
@@ -4065,7 +4454,7 @@
             </div>
           </details>
 
-          <details class="tfq-card tfq-admin-section" data-admin-permission="admin.notifications.view">
+          <details class="tfq-card tfq-admin-section">
             <summary class="tfq-admin-summary">
               <span>Notificações</span>
             </summary>
@@ -4117,7 +4506,10 @@
               <div id="tfq-notification-settings-status"></div>
             </div>
           </details>
+        </div>
 
+        <!-- ABA ADMIN -->
+        <div id="tfq-tab-usuarios" class="tfq-tab-pane tfq-tab-pane-hidden">
           <details class="tfq-card tfq-admin-section" data-admin-permission="admin.fields.view">
             <summary class="tfq-admin-summary">
               <span>Campos personalizados</span>
@@ -4237,7 +4629,9 @@
       .then(() => toggleSettingsLoaded ? applyToggleSettings() : loadToggleSettings())
       .then(() => panelSettingsLoaded ? applyPanelSettings() : loadPanelSettings())
       .then(() => notificationSettingsLoaded ? undefined : loadNotificationSettings())
+      .then(() => themeSettingsLoaded ? applyThemeSettings() : loadThemeSettings())
       .then(() => {
+        renderThemeSettingsForm();
         renderToggleAppearanceForm();
         renderPanelSettingsForm();
         renderNotificationSettingsForm();
@@ -4259,6 +4653,11 @@
         applyPanelSettings();
       }
       if (!notificationSettingsLoaded) await loadNotificationSettings();
+      if (!themeSettingsLoaded) {
+        await loadThemeSettings();
+      } else {
+        applyThemeSettings();
+      }
 
       const notConfiguredEl = document.getElementById('tfq-not-configured');
       const tabsEl          = document.getElementById('tfq-tabs');
@@ -4307,6 +4706,7 @@
       }
 
       updateUserRoleOptions();
+      renderThemeSettingsForm();
       renderToggleAppearanceForm();
       renderPanelSettingsForm();
       renderNotificationSettingsForm();
@@ -4365,12 +4765,15 @@
         }
         if (target === 'usuarios') {
           applyAdminSectionPermissions();
-          if (hasPermission('admin.appearance.view', 'admin') || hasPermission('admin.appearance.edit', 'admin')) renderToggleAppearanceForm();
-          if (hasPermission('admin.window.view', 'admin') || hasPermission('admin.window.edit', 'admin')) renderPanelSettingsForm();
-          if (hasPermission('admin.notifications.view', 'admin') || hasPermission('admin.notifications.edit', 'admin')) renderNotificationSettingsForm();
           if (hasPermission('admin.fields.view', 'admin') || hasPermission('admin.fields.edit', 'admin')) loadFields();
           if (canViewUsersAdmin()) loadUsers();
           if (hasPermission('admin.audit.view', 'admin')) loadAuditLog();
+        }
+        if (target === 'preferencias') {
+          renderThemeSettingsForm();
+          renderToggleAppearanceForm();
+          renderPanelSettingsForm();
+          renderNotificationSettingsForm();
         }
       });
     });
@@ -4425,12 +4828,20 @@
     panel.querySelector('#tfq-download-backup').addEventListener('click', downloadBackup);
     panel.querySelector('#tfq-download-audit').addEventListener('click', downloadAuditLog);
     panel.querySelector('#tfq-reload-audit').addEventListener('click', loadAuditLog);
+    panel.querySelector('#tfq-save-theme-settings').addEventListener('click', saveThemeSettingsFromForm);
+    panel.querySelector('#tfq-reset-theme-settings').addEventListener('click', resetThemeSettings);
     panel.querySelector('#tfq-save-toggle-appearance').addEventListener('click', saveToggleAppearance);
     panel.querySelector('#tfq-reset-toggle-appearance').addEventListener('click', resetToggleAppearance);
     panel.querySelector('#tfq-save-panel-settings').addEventListener('click', savePanelSettingsFromForm);
     panel.querySelector('#tfq-reset-panel-settings').addEventListener('click', resetPanelSettings);
     panel.querySelector('#tfq-save-notification-settings').addEventListener('click', saveNotificationSettingsFromForm);
     panel.querySelector('#tfq-reset-notification-settings').addEventListener('click', resetNotificationSettings);
+    panel.querySelector('#tfq-theme-mode').addEventListener('change', previewThemeSettings);
+    panel.querySelector('#tfq-theme-night-start').addEventListener('input', previewThemeSettings);
+    panel.querySelector('#tfq-theme-night-end').addEventListener('input', previewThemeSettings);
+    panel.querySelector('#tfq-theme-day-primary').addEventListener('input', previewThemeSettings);
+    panel.querySelector('#tfq-theme-night-primary').addEventListener('input', previewThemeSettings);
+    panel.querySelector('#tfq-theme-apply-crm').addEventListener('change', toggleCrmThemeFromForm);
     panel.querySelector('#tfq-toggle-label').addEventListener('input', previewToggleAppearance);
     panel.querySelector('#tfq-toggle-color').addEventListener('input', previewToggleAppearance);
     panel.querySelector('#tfq-toggle-x').addEventListener('input', e => {
@@ -4616,6 +5027,9 @@
   window.addEventListener('tfq:conversation-change', (e) => {
     const leadName = e.detail && e.detail.leadName ? e.detail.leadName : null;
     checkVisibility();
+    window.setTimeout(markActiveCrmConversation, 120);
+    window.setTimeout(markReadableCrmBubbles, 160);
+    window.setTimeout(markCrmThemeSurfaces, 180);
     if (!panelRebuildContextKey) scheduleSync(true);
     // Atualiza o título imediatamente com o nome capturado pelo bridge,
     // antes mesmo do loadNegocios terminar
@@ -4638,6 +5052,9 @@
     observerDebounceTimer = setTimeout(() => {
       if (!panelInitialized && !hasValidConversation()) return;
       checkVisibility();
+      markActiveCrmConversation();
+      markReadableCrmBubbles();
+      markCrmThemeSurfaces();
     }, 200);
   });
 
